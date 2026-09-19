@@ -26,6 +26,7 @@ public partial class ContextMenuSAV : UserControl
         switch (z)
         {
             case Keys.Control: ClickView(sender, e); break;
+            case Keys.Control | Keys.Shift: ClickCloneAllBoxes(sender, e); break;
             case Keys.Shift: ClickSet(sender, e); break;
             case Keys.Alt: ClickDelete(sender, e); break;
             default:
@@ -45,6 +46,28 @@ public partial class ContextMenuSAV : UserControl
         Manager.Hover.Stop();
         var pk = Editor.Slots.Get(info.Slot);
         Editor.PKMEditor.PopulateFields(pk, false, true);
+    }
+
+    private void ClickCloneAllBoxes(object sender, EventArgs e)
+    {
+        var info = GetSenderInfo(sender);
+        if (info.IsEmpty())
+        { WinFormsUtil.Asterisk(); return; }
+
+        var sav = info.View.SAV;
+        if (!sav.HasBox)
+        { WinFormsUtil.Asterisk(); return; }
+
+        if (WinFormsUtil.Prompt(MessageBoxButtons.YesNo, "Clone the clicked Pokémon to every writable slot in every box?") != DialogResult.Yes)
+            return;
+
+        Manager.Hover.Stop();
+        var pk = info.ReadCurrent();
+        int slotSkipped = BoxCloneUtil.SetAllBoxes(sav, pk);
+        if (slotSkipped > 0)
+            WinFormsUtil.Alert(string.Format(MsgSaveBoxImportSkippedLocked, slotSkipped));
+
+        Manager.SE.UpdateBoxViewers(all: true);
     }
 
     private void ClickSet(object sender, EventArgs e)
