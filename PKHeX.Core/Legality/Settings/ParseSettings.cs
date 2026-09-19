@@ -83,7 +83,7 @@ public static class ParseSettings
     /// <returns>Save file is Physical GB cartridge save file (not Virtual Console)</returns>
     public static void InitFromSaveFileData(SaveFile sav)
     {
-        ActiveTrainer = sav;
+        ActiveTrainer = sav is BulkStorage ? null : sav;
         AllowEraCartGB = sav switch
         {
             SAV1 { IsVirtualConsole: true } => false,
