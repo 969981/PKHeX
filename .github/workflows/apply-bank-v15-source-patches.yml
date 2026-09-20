@@ -1,0 +1,56 @@
+name: Apply Bank v1.5 Source Patches
+
+on:
+  push:
+    branches:
+      - feature/bank-v15-full-image
+    paths:
+      - .github/bank-v15-patch.json
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply exact source replacements
+        shell: python
+        run: |
+          import json
+          import subprocess
+          from pathlib import Path
+
+          spec = json.loads(Path('.github/bank-v15-patch.json').read_text(encoding='utf-8'))
+          touched = []
+          for op in spec['replacements']:
+              path = Path(op['path'])
+              raw = path.read_bytes()
+              has_bom = raw.startswith(b'\xef\xbb\xbf')
+              text = raw.decode('utf-8-sig')
+              old = op['old']
+              new = op['new']
+              expected = op.get('count', 1)
+              actual = text.count(old)
+              if actual != expected:
+                  raise SystemExit(f"{path}: expected {expected} matches, found {actual} for replacement anchor")
+              text = text.replace(old, new, expected)
+              encoded = text.encode('utf-8')
+              if has_bom:
+                  encoded = b'\xef\xbb\xbf' + encoded
+              path.write_bytes(encoded)
+              touched.append(str(path))
+
+          subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
+          subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+          subprocess.run(['git', 'add', '--', *touched], check=True)
+          quiet = subprocess.run(['git', 'diff', '--cached', '--quiet'])
+          if quiet.returncode == 0:
+              print('No source changes to commit.')
+              raise SystemExit(0)
+          subprocess.run(['git', 'commit', '-m', spec['message']], check=True)
+          subprocess.run(['git', 'push', 'origin', 'HEAD:feature/bank-v15-full-image'], check=True)
