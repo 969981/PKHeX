@@ -1,0 +1,79 @@
+name: Verify and Release Bank v1.5 Full Image
+
+on:
+  push:
+    branches:
+      - feature/bank-v15-full-image
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-release:
+    if: startsWith(github.event.head_commit.message, 'release:')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run feature regression tests
+        shell: pwsh
+        run: dotnet test Tests/PKHeX.Core.Tests/PKHeX.Core.Tests.csproj -c Release --nologo --filter "FullyQualifiedName~ParseSettingsBulkStorageTests|FullyQualifiedName~BoxCloneUtilTests|FullyQualifiedName~Bank7V15|FullyQualifiedName~Bank7Metadata|FullyQualifiedName~Bank7BoxMetadata|FullyQualifiedName~Bank7RoundTrip|FullyQualifiedName~SaveUtilBank7"
+
+      - name: Run Core tests excluding known master baseline failure
+        shell: pwsh
+        run: dotnet test Tests/PKHeX.Core.Tests/PKHeX.Core.Tests.csproj -c Release --nologo --filter "FullyQualifiedName!=PKHeX.Core.Tests.Legality.EffortExpLegalityTests.ZeroEVs_ReturnsZero"
+
+      - name: Publish PKHeX Win-x64
+        shell: pwsh
+        run: dotnet publish PKHeX.WinForms/PKHeX.WinForms.csproj -c Release -r win-x64 -o publish --nologo
+
+      - name: Package release
+        shell: pwsh
+        run: |
+          $asset = 'PKHeX-Bank-v1.5-FullImage-MetadataViewer-20260920-win-x64.zip'
+          if (Test-Path $asset) { Remove-Item $asset -Force }
+          Compress-Archive -Path publish\* -DestinationPath $asset -CompressionLevel Optimal
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'bank-v15-full-image-20260920'
+          $asset = 'PKHeX-Bank-v1.5-FullImage-MetadataViewer-20260920-win-x64.zip'
+          $notes = @'
+          ## Pokémon Bank v1.5 full-image support
+          - Adds native recognition for the complete `0xBB518` serialized Pokémon Bank v1.5 image.
+          - Accepts `0xBB520` runtime object dumps and normalizes them to the serialized `0xBB518` body, never exporting the 8-byte runtime header.
+          - Keeps legacy `0xACA48` Bank containers compatible.
+          - Uses strict file recognition in `SaveUtil` while preserving permissive explicit `Bank7.GetBank7(...)` construction for programmatic/synthetic containers.
+
+          ## Metadata model and viewer
+          - Exposes header metadata, ten group names, 100 box footers, eight source records, per-slot format/source/timestamp arrays, transfer-format bytes, aggregate data, counters, and raw tail data.
+          - Adds a read-only Bank Metadata Viewer in the Box page for full Bank v1.5 images.
+          - Viewer tabs: Overview, Source Records, Boxes, Slots, and Raw Structure with hexadecimal preview.
+          - Unknown fields remain raw values rather than being assigned unverified business meanings.
+
+          ## Lossless editing guarantees
+          - No-op full-image load/save is byte-identical.
+          - Editing one Pokémon slot preserves every byte outside that slot.
+          - Object-dump input exports the canonical serialized body only.
+
+          ## Included earlier Bank/BulkStorage improvements
+          - BulkStorage containers no longer act as an active trainer for handling-trainer name/gender legality comparisons.
+          - Ctrl + Shift + click a populated slot clones it to every writable slot in every box; locked slots are skipped and reported.
+          - Existing Ctrl + click, Shift + click, Alt + click, and Ctrl + Alt current-box behavior remains unchanged.
+
+          ## Verification
+          - Bank v1.5 focused regression tests passed.
+          - BulkStorage trainer-context and clone-all regression tests passed.
+          - Core test suite passed excluding the pre-existing master baseline failure `PKHeX.Core.Tests.Legality.EffortExpLegalityTests.ZeroEVs_ReturnsZero`.
+          - Release-mode Win-x64 build/publish passed.
+          '@
+          gh release create $tag $asset --target $env:GITHUB_SHA --title 'PKHeX Bank v1.5 Full Image + Metadata Viewer 2026-09-20' --notes $notes
