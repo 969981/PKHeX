@@ -16,7 +16,7 @@ public class Bank7RoundTripTests
         data[Bank7V15Layout.TimestampBase + 789] = 0xD4;
         data[Bank7V15Layout.TailBase + 17] = 0xE5;
 
-        var bank = Bank7.GetBank7(data.ToArray());
+        var bank = Bank7.GetBank7((byte[])data.Clone());
         bank.Write().Span.SequenceEqual(data).Should().BeTrue();
     }
 
@@ -30,7 +30,7 @@ public class Bank7RoundTripTests
         data[Bank7V15Layout.TimestampBase + 789] = 0xD4;
         data[Bank7V15Layout.TailBase + 17] = 0xE5;
 
-        var bank = Bank7.GetBank7(data.ToArray());
+        var bank = Bank7.GetBank7((byte[])data.Clone());
         var pk = bank.BlankPKM;
         pk.Species = 25;
         pk.EncryptionConstant = 0x12345678;
@@ -55,7 +55,7 @@ public class Bank7RoundTripTests
         data[0] = 1;
         data[0x100] = 0x5A;
 
-        var bank = Bank7.GetBank7(data.ToArray());
+        var bank = Bank7.GetBank7((byte[])data.Clone());
         var output = bank.Write();
         output.Length.Should().Be(Bank7V15Layout.LegacySize);
         output.Span.SequenceEqual(data).Should().BeTrue();
