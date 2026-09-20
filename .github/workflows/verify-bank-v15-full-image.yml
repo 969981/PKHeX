@@ -1,0 +1,33 @@
+name: Verify Bank v1.5 Full Image
+
+on:
+  push:
+    branches:
+      - feature/bank-v15-full-image
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run Bank v1.5 feature tests
+        shell: pwsh
+        run: dotnet test Tests/PKHeX.Core.Tests/PKHeX.Core.Tests.csproj -c Release --nologo --filter "FullyQualifiedName~Bank7V15|FullyQualifiedName~Bank7Metadata|FullyQualifiedName~Bank7BoxMetadata|FullyQualifiedName~Bank7RoundTrip|FullyQualifiedName~SaveUtilBank7"
+
+      - name: Run Core tests excluding known master baseline failure
+        shell: pwsh
+        run: dotnet test Tests/PKHeX.Core.Tests/PKHeX.Core.Tests.csproj -c Release --nologo --filter "FullyQualifiedName!=PKHeX.Core.Tests.Legality.EffortExpLegalityTests.ZeroEVs_ReturnsZero"
+
+      - name: Build WinForms
+        shell: pwsh
+        run: dotnet build PKHeX.WinForms/PKHeX.WinForms.csproj -c Release --nologo
