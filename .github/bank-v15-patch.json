@@ -1,40 +1,25 @@
 {
-  "message": "feat: load full Pokemon Bank v1.5 images",
+  "message": "feat: expose Pokemon Bank v1.5 metadata",
   "replacements": [
     {
       "path": "PKHeX.Core/Saves/Storage/Bank7.cs",
-      "old": "    public Bank7(Memory<byte> data, Type t, [ConstantExpected] int start, int slotsPerBox = 30) : base(data, t, start, slotsPerBox) => Version = GameVersion.USUM;",
-      "new": "    public Bank7(Memory<byte> data, Type t, [ConstantExpected] int start, int slotsPerBox = 30, Bank7ImageKind imageKind = Bank7ImageKind.Legacy) : base(data, t, start, slotsPerBox)\n    {\n        Version = GameVersion.USUM;\n        ImageKind = imageKind;\n    }\n\n    public Bank7ImageKind ImageKind { get; }\n    public bool IsFullImage => ImageKind is Bank7ImageKind.V15Full or Bank7ImageKind.V15ObjectDump;"
+      "old": "    private const int GroupNameSize = 0x20;\n    private const int BankNameSize = 0x24;\n    private const int GroupNameSpacing = GroupNameSize + 2;\n    private const int BankNameSpacing = BankNameSize + 2;\n\n    public ulong UID => ReadUInt64LittleEndian(Data);\n\n    public string GetGroupName(int group)\n    {\n        ArgumentOutOfRangeException.ThrowIfGreaterThan<uint>((uint)group, 10);\n        int offset = 0x8 + (GroupNameSpacing * group) + 2; // skip over \" \"\n        return GetString(Data.Slice(offset, GroupNameSize / 2));\n    }",
+      "new": "    private const int GroupNameSize = 0x22; // 17 UTF-16 code units\n    private const int BankNameSize = 0x22; // 17 UTF-16 code units\n    private const int GroupNameSpacing = GroupNameSize;\n    private const int BankFooterSize = 0x26;\n\n    public ulong UID => ReadUInt64LittleEndian(Data);\n\n    public string GetGroupName(int group)\n    {\n        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual((uint)group, 10u);\n        int offset = 0x8 + (GroupNameSpacing * group);\n        return GetString(Data.Slice(offset, GroupNameSize));\n    }"
     },
     {
       "path": "PKHeX.Core/Saves/Storage/Bank7.cs",
-      "old": "    protected override Bank7 CloneInternal() => new(Data.ToArray(), PKMType, BoxStart, SlotsPerBox);",
-      "new": "    protected override Bank7 CloneInternal() => new(Data.ToArray(), PKMType, BoxStart, SlotsPerBox, ImageKind);"
+      "old": "    private int BoxDataSize => (SlotsPerBox * SIZE_STORED) + BankNameSpacing;\n    public override int GetBoxOffset(int box) => Box + (BoxDataSize * box);\n    public string GetBoxName(int box) => GetString(Data.Slice(GetBoxNameOffset(box), BankNameSize / 2));\n    public int GetBoxNameOffset(int box) => GetBoxOffset(box) + (SlotsPerBox * SIZE_STORED);\n    public int GetBoxIndex(int box) => ReadUInt16LittleEndian(Data[(GetBoxNameOffset(box) + BankNameSize)..]);",
+      "new": "    private int BoxDataSize => (SlotsPerBox * SIZE_STORED) + BankFooterSize;\n    public override int GetBoxOffset(int box) => Box + (BoxDataSize * box);\n    public string GetBoxName(int box) => GetString(Data.Slice(GetBoxNameOffset(box), BankNameSize));\n    public int GetBoxNameOffset(int box) => GetBoxOffset(box) + (SlotsPerBox * SIZE_STORED);\n    public byte GetBoxBackground(int box) => Data[GetBoxNameOffset(box) + 0x22];\n    public byte GetBoxGroup(int box) => Data[GetBoxNameOffset(box) + 0x23];\n    public int GetBoxOrder(int box) => ReadUInt16LittleEndian(Data[(GetBoxNameOffset(box) + 0x24)..]);\n    public int GetBoxIndex(int box) => GetBoxOrder(box);"
     },
     {
       "path": "PKHeX.Core/Saves/Storage/Bank7.cs",
-      "old": "    private int BankCount\n    {\n        get => Data[0x15E];\n        set => Data[0x15E] = (byte)value;\n    }",
-      "new": "    private int BankCount\n    {\n        get => ReadUInt16LittleEndian(Data[Bank7V15Layout.BoxCountOffset..]);\n        set => WriteUInt16LittleEndian(Data[Bank7V15Layout.BoxCountOffset..], (ushort)value);\n    }"
+      "old": "    private const int BoxStart = Bank7V15Layout.BoxStart;",
+      "new": "    private void EnsureFullImage()\n    {\n        if (!IsFullImage)\n            throw new InvalidOperationException(\"This metadata is only available in Pokémon Bank v1.5 full images.\");\n    }\n\n    public Bank7HeaderMetadata GetHeaderMetadata()\n    {\n        EnsureFullImage();\n        return new Bank7HeaderMetadata(\n            ReadUInt64LittleEndian(Data),\n            ReadUInt16LittleEndian(Data[Bank7V15Layout.VersionOffset..]),\n            ReadUInt16LittleEndian(Data[Bank7V15Layout.BoxCountOffset..]),\n            ReadUInt16LittleEndian(Data[0x160..]),\n            Data[0x162], Data[0x163], Data[0x164], Data[0x165], Data[0x166], Data[0x167],\n            ReadUInt32LittleEndian(Data[0x168..]),\n            ReadUInt32LittleEndian(Data[0x16C..]),\n            ReadUInt32LittleEndian(Data[0x170..]),\n            ReadUInt32LittleEndian(Data[0x174..]),\n            Data.Slice(0x178, 4).ToArray(),\n            ReadUInt16LittleEndian(Data[Bank7V15Layout.CountersBase..]),\n            ReadUInt16LittleEndian(Data[(Bank7V15Layout.CountersBase + 2)..]));\n    }\n\n    public Bank7SlotMetadata GetSlotMetadata(int box, int slot)\n    {\n        EnsureFullImage();\n        return new Bank7SlotMetadata(\n            Data[Bank7V15Layout.GetFormatOffset(box, slot)],\n            Data[Bank7V15Layout.GetSourceOffset(box, slot)],\n            ReadUInt64LittleEndian(Data[Bank7V15Layout.GetTimestampOffset(box, slot)..]));\n    }\n\n    public byte GetTransferFormatTag(int slot)\n    {\n        EnsureFullImage();\n        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual((uint)slot, (uint)Bank7V15Layout.SlotsPerBox);\n        return Data[Bank7V15Layout.TransferFormatBase + slot];\n    }\n\n    public Bank7SourceRecord GetSourceRecord(int index)\n    {\n        EnsureFullImage();\n        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual((uint)index, 8u);\n        int offset = Bank7V15Layout.SourceRecordBase + (index * Bank7V15Layout.SourceRecordSize);\n        var statistics = new uint[9];\n        for (int i = 0; i < statistics.Length; i++)\n            statistics[i] = ReadUInt32LittleEndian(Data[(offset + 32 + (i * sizeof(uint)))..]);\n\n        return new Bank7SourceRecord(\n            GetString(Data.Slice(offset, 26)),\n            ReadUInt16LittleEndian(Data[(offset + 26)..]),\n            ReadUInt32LittleEndian(Data[(offset + 28)..]),\n            statistics);\n    }\n\n    public ReadOnlySpan<byte> GetAggregateData()\n    {\n        EnsureFullImage();\n        return Data.Slice(Bank7V15Layout.AggregateBase, Bank7V15Layout.AggregateSize);\n    }\n\n    public ReadOnlySpan<byte> GetTailData()\n    {\n        EnsureFullImage();\n        return Data.Slice(Bank7V15Layout.TailBase, Bank7V15Layout.TailSize);\n    }\n\n    private const int BoxStart = Bank7V15Layout.BoxStart;"
     },
     {
       "path": "PKHeX.Core/Saves/Storage/Bank7.cs",
-      "old": "    private const int BoxStart = 0x17C;\n    public static Bank7 GetBank7(Memory<byte> data) => new(data, typeof(PK7), BoxStart);",
-      "new": "    private const int BoxStart = Bank7V15Layout.BoxStart;\n\n    public static Bank7 GetBank7(Memory<byte> data)\n    {\n        if (!Bank7V15Layout.TryIdentify(data.Span, out var kind))\n            throw new ArgumentException(\"Unsupported or invalid Pokémon Bank image.\", nameof(data));\n\n        var body = kind == Bank7ImageKind.V15ObjectDump\n            ? data.Slice(Bank7V15Layout.ObjectHeaderSize, Bank7V15Layout.FullSize)\n            : data;\n        return new Bank7(body, typeof(PK7), BoxStart, Bank7V15Layout.SlotsPerBox, kind);\n    }"
-    },
-    {
-      "path": "PKHeX.Core/Saves/Util/SaveUtil.cs",
-      "old": "    public const int SIZE_G7BANK = 0xACA48;",
-      "new": "    public const int SIZE_G7BANK = Bank7V15Layout.LegacySize;\n    public const int SIZE_G7BANK_V15 = Bank7V15Layout.FullSize;\n    public const int SIZE_G7BANK_OBJECT = Bank7V15Layout.ObjectDumpSize;"
-    },
-    {
-      "path": "PKHeX.Core/Saves/Util/SaveUtil.cs",
-      "old": "        or SIZE_G7BANK or SIZE_G4BANK or SIZE_G4RANCH or SIZE_G4RANCH_PLAT;",
-      "new": "        or SIZE_G7BANK or SIZE_G7BANK_V15 or SIZE_G7BANK_OBJECT or SIZE_G4BANK or SIZE_G4RANCH or SIZE_G4RANCH_PLAT;"
-    },
-    {
-      "path": "PKHeX.Core/Saves/Util/SaveUtil.cs",
-      "old": "    private static bool IsBank7(ReadOnlySpan<byte> data) => data.Length == SIZE_G7BANK && data[0] != 0;",
-      "new": "    private static bool IsBank7(ReadOnlySpan<byte> data) => Bank7V15Layout.TryIdentify(data, out _);"
+      "old": "    public static Bank7 GetBank7(Memory<byte> data)\n    {\n        if (!Bank7V15Layout.TryIdentify(data.Span, out var kind))\n            throw new ArgumentException(\"Unsupported or invalid Pokémon Bank image.\", nameof(data));\n\n        var body = kind == Bank7ImageKind.V15ObjectDump\n            ? data.Slice(Bank7V15Layout.ObjectHeaderSize, Bank7V15Layout.FullSize)\n            : data;\n        return new Bank7(body, typeof(PK7), BoxStart, Bank7V15Layout.SlotsPerBox, kind);\n    }",
+      "new": "    public static Bank7 GetBank7(Memory<byte> data)\n    {\n        // SaveUtil performs strict file recognition. Keep this explicit factory permissive so\n        // synthetic buffers and programmatic Bank containers remain backwards compatible.\n        if (!Bank7V15Layout.TryIdentify(data.Span, out var kind))\n            return new Bank7(data, typeof(PK7), BoxStart, Bank7V15Layout.SlotsPerBox, Bank7ImageKind.Legacy);\n\n        var body = kind == Bank7ImageKind.V15ObjectDump\n            ? data.Slice(Bank7V15Layout.ObjectHeaderSize, Bank7V15Layout.FullSize)\n            : data;\n        return new Bank7(body, typeof(PK7), BoxStart, Bank7V15Layout.SlotsPerBox, kind);\n    }"
     }
   ]
 }
