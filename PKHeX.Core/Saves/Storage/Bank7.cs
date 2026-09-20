@@ -9,14 +9,21 @@ namespace PKHeX.Core;
 /// </summary>
 public sealed class Bank7 : BulkStorage, IBoxDetailNameRead
 {
-    public Bank7(Memory<byte> data, Type t, [ConstantExpected] int start, int slotsPerBox = 30) : base(data, t, start, slotsPerBox) => Version = GameVersion.USUM;
+    public Bank7(Memory<byte> data, Type t, [ConstantExpected] int start, int slotsPerBox = 30, Bank7ImageKind imageKind = Bank7ImageKind.Legacy) : base(data, t, start, slotsPerBox)
+    {
+        Version = GameVersion.USUM;
+        ImageKind = imageKind;
+    }
+
+    public Bank7ImageKind ImageKind { get; }
+    public bool IsFullImage => ImageKind is Bank7ImageKind.V15Full or Bank7ImageKind.V15ObjectDump;
 
     public override GameVersion Version { get => GameVersion.USUM; set { } }
     public override PersonalTable7 Personal => PersonalTable.USUM;
     public override ReadOnlySpan<ushort> HeldItems => Legal.HeldItems_SM;
     protected override PK7 GetPKM(Memory<byte> data) => new(data);
     protected override void DecryptPKM(Span<byte> data) => PokeCrypto.Decrypt67(data);
-    protected override Bank7 CloneInternal() => new(Data.ToArray(), PKMType, BoxStart, SlotsPerBox);
+    protected override Bank7 CloneInternal() => new(Data.ToArray(), PKMType, BoxStart, SlotsPerBox, ImageKind);
     public override string PlayTimeString => $"{Year:00}{Month:00}{Day:00}_{Hours:00}ː{Minutes:00}";
     protected internal override string ShortSummary => PlayTimeString;
     private const int GroupNameSize = 0x20;
@@ -37,8 +44,8 @@ public sealed class Bank7 : BulkStorage, IBoxDetailNameRead
 
     private int BankCount
     {
-        get => Data[0x15E];
-        set => Data[0x15E] = (byte)value;
+        get => ReadUInt16LittleEndian(Data[Bank7V15Layout.BoxCountOffset..]);
+        set => WriteUInt16LittleEndian(Data[Bank7V15Layout.BoxCountOffset..], (ushort)value);
     }
 
     private int Year => ReadUInt16LittleEndian(Data[0x160..]);
@@ -53,6 +60,16 @@ public sealed class Bank7 : BulkStorage, IBoxDetailNameRead
     public int GetBoxNameOffset(int box) => GetBoxOffset(box) + (SlotsPerBox * SIZE_STORED);
     public int GetBoxIndex(int box) => ReadUInt16LittleEndian(Data[(GetBoxNameOffset(box) + BankNameSize)..]);
 
-    private const int BoxStart = 0x17C;
-    public static Bank7 GetBank7(Memory<byte> data) => new(data, typeof(PK7), BoxStart);
+    private const int BoxStart = Bank7V15Layout.BoxStart;
+
+    public static Bank7 GetBank7(Memory<byte> data)
+    {
+        if (!Bank7V15Layout.TryIdentify(data.Span, out var kind))
+            throw new ArgumentException("Unsupported or invalid Pokémon Bank image.", nameof(data));
+
+        var body = kind == Bank7ImageKind.V15ObjectDump
+            ? data.Slice(Bank7V15Layout.ObjectHeaderSize, Bank7V15Layout.FullSize)
+            : data;
+        return new Bank7(body, typeof(PK7), BoxStart, Bank7V15Layout.SlotsPerBox, kind);
+    }
 }
