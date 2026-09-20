@@ -1682,6 +1682,11 @@ public partial class SAVEditor : UserControl, ISlotViewer<PictureBox>, ISaveFile
         var navButton = Box.B_BoxRight;
         B_SearchBox.Top = Box.Top + navButton.Top;
         B_SearchBox.Left = Box.Left + Box.BoxPokeGrid.Right - B_SearchBox.Width;
+
+        // The Bank metadata button is intentionally explicit rather than icon-only; keep it
+        // directly below Search after box centering/resizing so it remains discoverable.
+        B_BankMetadata.Top = B_SearchBox.Bottom + 4;
+        B_BankMetadata.Left = B_SearchBox.Right - B_BankMetadata.Width;
     }
 
     private void BoxPopoutAlignButton()
