@@ -36,7 +36,7 @@ jobs:
       - name: Package release
         shell: pwsh
         run: |
-          $asset = 'PKHeX-Bank-v1.5-FullImage-MetadataViewer-20260920-win-x64.zip'
+          $asset = 'PKHeX-Bank-v1.5-FullImage-MetadataViewer-r2-20260920-win-x64.zip'
           if (Test-Path $asset) { Remove-Item $asset -Force }
           Compress-Archive -Path publish\* -DestinationPath $asset -CompressionLevel Optimal
 
@@ -45,35 +45,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = 'bank-v15-full-image-20260920'
-          $asset = 'PKHeX-Bank-v1.5-FullImage-MetadataViewer-20260920-win-x64.zip'
+          $tag = 'bank-v15-full-image-20260920-r2'
+          $asset = 'PKHeX-Bank-v1.5-FullImage-MetadataViewer-r2-20260920-win-x64.zip'
           $notes = @'
+          ## Metadata viewer r2
+          - Makes the Pokémon Bank metadata entry explicit with a visible `Metadata` text button on the Box page for `0xBB518` full images.
+          - Synchronizes visibility as soon as the edit environment receives a full Bank image.
+          - Keeps the Metadata button aligned beneath Search after box centering and window resizing.
+          - Boxes view now summarizes raw Gen 6/Gen 7 format tags, source-code distributions, and latest metadata timestamp.
+          - Slots view now shows interpreted format, source title, decoded UTC metadata time, and the original raw timestamp together.
+          - Source codes use the Bank mapping for X/Y/OR/AS/Sun/Moon/Ultra Sun/Ultra Moon; unknown values remain raw.
+
           ## Pokémon Bank v1.5 full-image support
-          - Adds native recognition for the complete `0xBB518` serialized Pokémon Bank v1.5 image.
-          - Accepts `0xBB520` runtime object dumps and normalizes them to the serialized `0xBB518` body, never exporting the 8-byte runtime header.
+          - Native recognition for the complete `0xBB518` serialized Pokémon Bank v1.5 image.
+          - Accepts `0xBB520` runtime object dumps and normalizes them to the serialized `0xBB518` body.
           - Keeps legacy `0xACA48` Bank containers compatible.
-          - Uses strict file recognition in `SaveUtil` while preserving permissive explicit `Bank7.GetBank7(...)` construction for programmatic/synthetic containers.
-
-          ## Metadata model and viewer
-          - Exposes header metadata, ten group names, 100 box footers, eight source records, per-slot format/source/timestamp arrays, transfer-format bytes, aggregate data, counters, and raw tail data.
-          - Adds a read-only Bank Metadata Viewer in the Box page for full Bank v1.5 images.
-          - Viewer tabs: Overview, Source Records, Boxes, Slots, and Raw Structure with hexadecimal preview.
-          - Unknown fields remain raw values rather than being assigned unverified business meanings.
-
-          ## Lossless editing guarantees
-          - No-op full-image load/save is byte-identical.
-          - Editing one Pokémon slot preserves every byte outside that slot.
-          - Object-dump input exports the canonical serialized body only.
+          - No-op full-image load/save remains byte-identical.
 
           ## Included earlier Bank/BulkStorage improvements
-          - BulkStorage containers no longer act as an active trainer for handling-trainer name/gender legality comparisons.
-          - Ctrl + Shift + click a populated slot clones it to every writable slot in every box; locked slots are skipped and reported.
-          - Existing Ctrl + click, Shift + click, Alt + click, and Ctrl + Alt current-box behavior remains unchanged.
+          - BulkStorage containers do not act as an active trainer for handling-trainer name/gender legality comparisons.
+          - Ctrl + Shift + click clones the clicked Pokémon to every writable box slot; locked slots are skipped and reported.
 
           ## Verification
-          - Bank v1.5 focused regression tests passed.
-          - BulkStorage trainer-context and clone-all regression tests passed.
-          - Core test suite passed excluding the pre-existing master baseline failure `PKHeX.Core.Tests.Legality.EffortExpLegalityTests.ZeroEVs_ReturnsZero`.
-          - Release-mode Win-x64 build/publish passed.
+          - Bank v1.5 focused regression tests.
+          - BulkStorage trainer-context and clone-all regression tests.
+          - Core suite excluding the pre-existing master baseline failure `PKHeX.Core.Tests.Legality.EffortExpLegalityTests.ZeroEVs_ReturnsZero`.
+          - Release-mode Win-x64 publish.
           '@
-          gh release create $tag $asset --target $env:GITHUB_SHA --title 'PKHeX Bank v1.5 Full Image + Metadata Viewer 2026-09-20' --notes $notes
+          gh release create $tag $asset --target $env:GITHUB_SHA --title 'PKHeX Bank v1.5 Full Image + Metadata Viewer r2 2026-09-20' --notes $notes
