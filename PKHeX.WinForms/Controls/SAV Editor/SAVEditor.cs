@@ -40,6 +40,7 @@ public partial class SAVEditor : UserControl, ISlotViewer<PictureBox>, ISaveFile
     public ToolStripMenuItem Menu_Redo { get; set; } = null!;
     public ToolStripMenuItem Menu_Undo { get; set; } = null!;
     private bool FieldsLoaded;
+    private readonly Button B_BankMetadata;
 
     public IList<PictureBox> SlotPictureBoxes { get; }
 
@@ -66,6 +67,24 @@ public partial class SAVEditor : UserControl, ISlotViewer<PictureBox>, ISaveFile
     public SAVEditor()
     {
         InitializeComponent();
+
+        B_BankMetadata = new Button
+        {
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            Image = Properties.Resources.database,
+            Location = new Point(B_SearchBox.Left - 28, B_SearchBox.Top),
+            Margin = new Padding(0),
+            Name = "B_BankMetadata",
+            Size = B_SearchBox.Size,
+            TabIndex = B_SearchBox.TabIndex + 1,
+            UseVisualStyleBackColor = true,
+            Visible = false,
+        };
+        B_BankMetadata.Click += B_BankMetadata_Click;
+        Tab_Box.Controls.Add(B_BankMetadata);
+        B_BankMetadata.BringToFront();
+        var bankMetadataTip = new ToolTip(components!);
+        bankMetadataTip.SetToolTip(B_BankMetadata, "Pokémon Bank v1.5 Metadata");
 
         L_SlotOccupied = [L_DC1, L_DC2];
         TB_SlotEXP = [TB_Daycare1XP, TB_Daycare2XP];
@@ -1286,8 +1305,19 @@ public partial class SAVEditor : UserControl, ISlotViewer<PictureBox>, ISaveFile
         return true;
     }
 
+    private void B_BankMetadata_Click(object? sender, EventArgs e)
+    {
+        if (SAV is not Bank7 { IsFullImage: true } bank)
+            return;
+
+        using var form = new PKHeX.WinForms.SAV_Bank7Metadata(bank);
+        form.ShowDialog(FindForm());
+    }
+
     private void ToggleViewSubEditors(SaveFile sav)
     {
+        B_BankMetadata.Visible = sav is Bank7 { IsFullImage: true };
+
         if (!sav.State.Exportable || sav is BulkStorage)
         {
             FLP_SAVtools.Visible = false;
