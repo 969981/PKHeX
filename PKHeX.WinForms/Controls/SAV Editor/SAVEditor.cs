@@ -22,6 +22,7 @@ public partial class SAVEditor : UserControl, ISlotViewer<PictureBox>, ISaveFile
         M.Env = value;
         menu.Editor = value;
         SAV = value.SAV;
+        B_BankMetadata.Visible = SAV is Bank7 { IsFullImage: true };
         value.Slots.Publisher.Subscribe(this);
         value.Slots.Publisher.Subscribe(SL_Party);
         value.Slots.Publisher.Subscribe(Box);
@@ -71,12 +72,13 @@ public partial class SAVEditor : UserControl, ISlotViewer<PictureBox>, ISaveFile
         B_BankMetadata = new Button
         {
             Anchor = AnchorStyles.Top | AnchorStyles.Right,
-            Image = Properties.Resources.database,
-            Location = new Point(B_SearchBox.Left - 28, B_SearchBox.Top),
+            Location = new Point(B_SearchBox.Right - 78, B_SearchBox.Bottom + 4),
             Margin = new Padding(0),
             Name = "B_BankMetadata",
-            Size = B_SearchBox.Size,
+            Size = new Size(78, B_SearchBox.Height),
             TabIndex = B_SearchBox.TabIndex + 1,
+            Text = "Metadata",
+            AccessibleName = "Pokémon Bank v1.5 Metadata",
             UseVisualStyleBackColor = true,
             Visible = false,
         };

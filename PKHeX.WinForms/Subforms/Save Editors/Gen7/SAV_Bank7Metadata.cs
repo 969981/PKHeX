@@ -96,17 +96,49 @@ public sealed class SAV_Bank7Metadata : Form
 
     private TabPage CreateBoxesTab()
     {
-        var grid = CreateGrid("Box", "Name", "Background", "Group", "Order");
+        var grid = CreateGrid("Box", "Name", "Background", "Group", "Order", "Gen 6", "Gen 7", "Sources", "Latest Metadata Time");
         grid.Columns[1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
         for (int box = 0; box < Bank.BoxCount; box++)
         {
+            int gen6 = 0;
+            int gen7 = 0;
+            var sourceCounts = new int[256];
+            ulong latest = 0;
+            for (int slot = 0; slot < Bank.BoxSlotCount; slot++)
+            {
+                var meta = Bank.GetSlotMetadata(box, slot);
+                if (meta.FormatTag == 0)
+                    gen6++;
+                else if (meta.FormatTag == 1)
+                    gen7++;
+                if (meta.SourceCode != 0)
+                    sourceCounts[meta.SourceCode]++;
+                if (meta.Timestamp > latest)
+                    latest = meta.Timestamp;
+            }
+
+            var sources = new StringBuilder();
+            for (int code = 1; code < sourceCounts.Length; code++)
+            {
+                int count = sourceCounts[code];
+                if (count == 0)
+                    continue;
+                if (sources.Length != 0)
+                    sources.Append(", ");
+                sources.Append(SourceCodeText((byte)code)).Append('×').Append(count);
+            }
+
             grid.Rows.Add(
                 box + 1,
                 Bank.GetBoxName(box),
                 $"0x{Bank.GetBoxBackground(box):X2}",
                 Bank.GetBoxGroup(box),
-                Bank.GetBoxOrder(box));
+                Bank.GetBoxOrder(box),
+                gen6,
+                gen7,
+                sources.Length == 0 ? "—" : sources.ToString(),
+                TimestampText(latest));
         }
 
         return CreateTab("Boxes", grid);
@@ -114,7 +146,7 @@ public sealed class SAV_Bank7Metadata : Form
 
     private TabPage CreateSlotsTab()
     {
-        var grid = CreateGrid("Global", "Box", "Slot", "Species", "Format Tag", "Source Code", "Timestamp", "Transfer Format");
+        var grid = CreateGrid("Global", "Box", "Slot", "Species", "Format", "Source", "Time UTC", "Raw Time", "Transfer Format");
         for (int box = 0; box < Bank.BoxCount; box++)
         {
             for (int slot = 0; slot < Bank.BoxSlotCount; slot++)
@@ -127,10 +159,11 @@ public sealed class SAV_Bank7Metadata : Form
                     box + 1,
                     slot + 1,
                     pk.Species,
-                    $"0x{meta.FormatTag:X2}",
-                    $"0x{meta.SourceCode:X2}",
-                    $"0x{meta.Timestamp:X16}",
-                    $"0x{Bank.GetTransferFormatTag(slot):X2}");
+                    FormatTagText(meta.FormatTag),
+                    SourceCodeText(meta.SourceCode),
+                    TimestampText(meta.Timestamp),
+                    meta.Timestamp == 0 ? "0" : $"0x{meta.Timestamp:X16}",
+                    FormatTagText(Bank.GetTransferFormatTag(slot)));
             }
         }
 
@@ -257,6 +290,42 @@ public sealed class SAV_Bank7Metadata : Form
         foreach (var name in columns)
             grid.Columns.Add(name.Replace(' ', '_'), name);
         return grid;
+    }
+
+    private static string FormatTagText(byte value) => value switch
+    {
+        0 => "0x00 (Generation 6)",
+        1 => "0x01 (Generation 7)",
+        _ => $"0x{value:X2} (Unknown)",
+    };
+
+    private static string SourceCodeText(byte value) => value switch
+    {
+        0 => "0x00 (None / unknown)",
+        24 => "0x18 (Pokémon X)",
+        25 => "0x19 (Pokémon Y)",
+        26 => "0x1A (Pokémon Alpha Sapphire)",
+        27 => "0x1B (Pokémon Omega Ruby)",
+        30 => "0x1E (Pokémon Sun)",
+        31 => "0x1F (Pokémon Moon)",
+        32 => "0x20 (Pokémon Ultra Sun)",
+        33 => "0x21 (Pokémon Ultra Moon)",
+        _ => $"0x{value:X2} (Unknown)",
+    };
+
+    private static string TimestampText(ulong value)
+    {
+        if (value == 0)
+            return "—";
+        try
+        {
+            var epoch = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            return epoch.AddSeconds(value).ToString("yyyy-MM-dd HH:mm:ss 'UTC'");
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return "Out of range";
+        }
     }
 
     private static void AddValue(DataGridView grid, string field, object? value) => grid.Rows.Add(field, value?.ToString() ?? string.Empty);
