@@ -42,10 +42,8 @@ public class ParseSettingsBulkStorageTests
         // used to make bulk legality reject any other recent-handler name.
         new LegalityAnalysis(pk).Valid.Should().BeTrue();
 
-        var bank = Bank7.GetBank7(new byte[SaveUtil.SIZE_G7BANK_2])
-        {
-            BankCount = Bank7.FixedBoxCount,
-        };
+        var bank = Bank7.GetBank7(new byte[SaveUtil.SIZE_G7BANK_2]);
+        bank.BankCount = Bank7.FixedBoxCount;
         bank.SetBoxSlotAtIndex(pk, 0, 0, EntityImportSettings.None);
 
         var bulk = new BulkAnalysis(bank, new BulkAnalysisSettings());
