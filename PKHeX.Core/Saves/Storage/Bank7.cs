@@ -15,7 +15,11 @@ public sealed class Bank7 : BulkStorage, IBoxDetailName
     /// </summary>
     public static Bank7 GetBank7(Memory<byte> data)
     {
-        if (data.Length == SaveUtil.SIZE_G7BANK_1)
+        // Official Gen6 compact Bank files are upgraded to the full EOL layout.
+        // Older PKHeX/custom Bank workflows also produced compact 0xACA48 images
+        // whose revision field is already Gen7. Keep those compact images intact
+        // instead of rejecting or trying to reinterpret them as Gen6.
+        if (IsFormat1(data.Span))
             data = UpgradeFormatFrom1To2(data.Span);
         return new Bank7(data, typeof(PK7), BoxStart);
     }
@@ -315,7 +319,7 @@ public sealed class Bank7 : BulkStorage, IBoxDetailName
         return result;
     }
 
-    public static bool IsBank(ReadOnlySpan<byte> data) => IsFormat1(data) || IsFormat2(data);
+    public static bool IsBank(ReadOnlySpan<byte> data) => IsFormat1(data) || IsCompactGen7(data) || IsFormat2(data);
 
     public static bool IsFormat1(ReadOnlySpan<byte> data)
     {
@@ -324,6 +328,19 @@ public sealed class Bank7 : BulkStorage, IBoxDetailName
         if (ReadUInt16LittleEndian(data[0x15E..]) != FixedBoxCount)
             return false;
         return ReadUInt16LittleEndian(data[0x15C..]) is ((ushort)BankRevision.Gen6);
+    }
+
+    /// <summary>
+    /// Legacy compact Gen7 Bank image used by earlier PKHeX/custom Bank workflows.
+    /// It has the original 0xACA48 compact size but already carries revision 2.
+    /// </summary>
+    public static bool IsCompactGen7(ReadOnlySpan<byte> data)
+    {
+        if (data.Length != SaveUtil.SIZE_G7BANK_1)
+            return false;
+        if (ReadUInt16LittleEndian(data[0x15E..]) != FixedBoxCount)
+            return false;
+        return ReadUInt16LittleEndian(data[0x15C..]) is ((ushort)BankRevision.Gen7);
     }
 
     public static bool IsFormat2(ReadOnlySpan<byte> data)
