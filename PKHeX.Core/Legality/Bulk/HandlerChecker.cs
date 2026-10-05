@@ -15,8 +15,13 @@ public sealed class HandlerChecker : IBulkAnalyzer
     /// <param name="input">The bulk analysis data to check.</param>
     public void Analyze(BulkAnalysis input)
     {
-        if (input.Trainer.Generation < 6 || !input.Settings.CheckActiveHandler)
-            return; // no HT yet
+        // Bulk storage containers (Bank dumps, concatenated PKM files, etc.) do not carry an
+        // authoritative active trainer. Their inherited SaveFile trainer fields are only
+        // placeholder metadata, so comparing HT name/gender against them produces false
+        // TransferHandlerMismatch* results (for example, only "PKHeX" being accepted).
+        if (input.Trainer is BulkStorage || input.Trainer.Generation < 6 || !input.Settings.CheckActiveHandler)
+            return; // no authoritative active handler to compare against
+
         CheckHandlerFlag(input);
     }
 
@@ -39,8 +44,8 @@ public sealed class HandlerChecker : IBulkAnalyzer
         var la = cr.Analysis;
         var pk = cs.Entity;
         var tr = cs.SAV;
-        if (!tr.State.Exportable)
-            return; // blank saves should be skipped for checking handler state
+        if (tr is BulkStorage || !tr.State.Exportable)
+            return; // no trainer identity for bulk storage; blank saves are also skipped
 
         var current = pk.CurrentHandler;
 
