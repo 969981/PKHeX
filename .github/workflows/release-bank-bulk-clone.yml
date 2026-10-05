@@ -36,7 +36,7 @@ jobs:
         if: startsWith(github.event.head_commit.message, 'release:')
         shell: pwsh
         run: |
-          $asset = 'PKHeX-Bank-BulkStorage-CloneAll-20260919-win-x64.zip'
+          $asset = 'PKHeX-Bank-BulkStorage-CloneAll-20261005-win-x64.zip'
           if (Test-Path $asset) { Remove-Item $asset -Force }
           Compress-Archive -Path publish\* -DestinationPath $asset -CompressionLevel Optimal
 
@@ -46,18 +46,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = 'bank-bulk-clone-20260919'
-          $asset = 'PKHeX-Bank-BulkStorage-CloneAll-20260919-win-x64.zip'
+          $tag = 'bank-bulk-clone-20261005'
+          $asset = 'PKHeX-Bank-BulkStorage-CloneAll-20261005-win-x64.zip'
           $notes = @'
           ## Changes
-          - Pokémon Bank / BulkStorage containers no longer act as an active trainer for trainer-name/gender legality comparisons, avoiding false trainer-mismatch flags when the container has no trainer identity.
-          - Ctrl + Shift + click a populated slot to clone that Pokémon to every writable slot in every box.
-          - Overwrite-protected/locked slots are skipped and the skipped count is reported.
-          - Existing Ctrl + click, Shift + click, Alt + click, and Ctrl + Alt current-box clone behavior is preserved.
+          - Synced the fork master with current upstream PKHeX and merged it into the Bank/BulkStorage feature branch.
+          - Fixes false handling-trainer legality failures in Pokémon Bank / BulkStorage containers: the placeholder SaveFile trainer name (normally `PKHeX`) is no longer treated as an authoritative active trainer.
+          - Recent-handler names such as `Night`, `PKHeX1`, and other legitimate names no longer become illegal merely because they differ from the BulkStorage placeholder trainer.
+          - Real game saves still perform normal active-trainer / current-handler legality checks.
+          - Keeps Ctrl + Shift + click clone-to-all-boxes behavior and adapts regression coverage to the current Bank7 Transfer Box layout.
 
           ## Verification
-          - Feature regression tests for BulkStorage trainer context and clone-to-all-boxes behavior.
-          - Core test suite excluding the pre-existing master failure PKHeX.Core.Tests.Legality.EffortExpLegalityTests.ZeroEVs_ReturnsZero.
-          - Release-mode Win-x64 publish.
+          - Dedicated BulkStorage regression test verifies a legal PK7 with `CurrentHandler = 1` and handling trainer `Night` does not produce `TransferHandlerMismatchName`.
+          - Clone-all-boxes regression test passes with the current Bank7 Transfer Box layout.
+          - Feature regression tests passed.
+          - Core test suite passed with the workflow's existing baseline exclusion.
+          - Release-mode Win-x64 publish passed.
           '@
-          gh release create $tag $asset --target $env:GITHUB_SHA --title 'PKHeX Bank BulkStorage Clone-All 2026-09-19' --notes $notes
+          gh release create $tag $asset --target $env:GITHUB_SHA --title 'PKHeX Bank BulkStorage Clone-All 2026-10-05' --notes $notes
