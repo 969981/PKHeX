@@ -157,7 +157,7 @@ public static class SaveUtil
         or SIZE_G4BR
         or SIZE_G3COLO or SIZE_G3XD or SIZE_G3RAW or SIZE_G3RAWHALF
         or SIZE_G2RAW_U
-        or SIZE_G7BANK_2 or SIZE_G4BANK or SIZE_G4RANCH or SIZE_G4RANCH_PLAT;
+        or SIZE_G7BANK_1 or SIZE_G7BANK_2 or SIZE_G4BANK or SIZE_G4RANCH or SIZE_G4RANCH_PLAT;
 
     /// <summary>Determines the type of the provided save data.</summary>
     /// <param name="data">Save data of which to determine the origins of</param>
