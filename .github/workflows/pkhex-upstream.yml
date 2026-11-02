@@ -1,0 +1,134 @@
+name: PKHeX - Sync Official Upstream and Release
+
+on:
+  schedule:
+    # Every 10 minutes; GitHub Actions may delay scheduled runs.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+  push:
+    # The repository's current default branch is trash-test.
+    # Scheduled workflows must exist on the default branch.
+    branches: [trash-test]
+    paths:
+      - '.github/workflows/pkhex-upstream.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pkhex-official-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Fast-forward original master from kwsch/PKHeX
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.fast_forward.outputs.changed }}
+      sha: ${{ steps.fast_forward.outputs.sha }}
+    steps:
+      - name: Check out mirror master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Safely synchronize official master
+        id: fast_forward
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/kwsch/PKHeX.git
+          git fetch --no-tags upstream master
+          local_sha="$(git rev-parse HEAD)"
+          upstream_sha="$(git rev-parse FETCH_HEAD)"
+          echo "sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+
+          if [[ "$local_sha" == "$upstream_sha" ]]; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo "Already synchronized: $upstream_sha"
+            exit 0
+          fi
+
+          # Never rewrite modified history, nor any Bank feature branches.
+          if ! git merge-base --is-ancestor "$local_sha" "$upstream_sha"; then
+            echo "::error::Local master has diverged from the official upstream; refusing to force-push."
+            exit 1
+          fi
+
+          git push origin "$upstream_sha:refs/heads/master"
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+          echo "Synchronized master: $local_sha -> $upstream_sha"
+
+  release:
+    name: Build and publish upstream Win-x64
+    needs: sync
+    if: needs.sync.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - name: Check out exact synchronized upstream commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync.outputs.sha }}
+          fetch-depth: 1
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build original PKHeX Windows app
+        shell: pwsh
+        run: |
+          dotnet publish PKHeX.WinForms/PKHeX.WinForms.csproj --configuration Release --runtime win-x64 --self-contained false --output publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path 'publish/PKHeX.exe')) { throw 'Expected PKHeX.exe missing.' }
+
+      - name: Archive build
+        id: bundle
+        shell: pwsh
+        run: |
+          $sha = '${{ needs.sync.outputs.sha }}'
+          $short = $sha.Substring(0, 12)
+          $tag = "upstream-$short"
+          $archive = "PKHeX-upstream-$short-win-x64.zip"
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Compress-Archive -Path 'publish/*' -DestinationPath "dist/$archive" -Force
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "archive=dist/$archive" >> $env:GITHUB_OUTPUT
+
+      - name: Retain a downloadable Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PKHeX-upstream-${{ needs.sync.outputs.sha }}-win-x64
+          path: ${{ steps.bundle.outputs.archive }}
+          if-no-files-found: error
+
+      - name: Publish GitHub Release after successful build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_SHA: ${{ needs.sync.outputs.sha }}
+          RELEASE_TAG: ${{ steps.bundle.outputs.tag }}
+          RELEASE_ARCHIVE: ${{ steps.bundle.outputs.archive }}
+        run: |
+          gh release view "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $env:RELEASE_TAG already exists; skipping duplicate."
+            exit 0
+          }
+          $notes = @"
+          Automatic, unmodified-source build of kwsch/PKHeX master.
+
+          Upstream repository: https://github.com/kwsch/PKHeX
+          Upstream commit: $env:UPSTREAM_SHA
+          Source branch: master
+          Platform: Windows x64
+          Runtime: .NET 10 Desktop Runtime required (framework-dependent).
+
+          This is a community mirror build, not an official PKHeX release.
+          Bank feature branches and their previous releases are kept separately.
+          "@
+          gh release create "$env:RELEASE_TAG" "$env:RELEASE_ARCHIVE" --repo "$env:GITHUB_REPOSITORY" --target "$env:UPSTREAM_SHA" --title "PKHeX upstream $($env:UPSTREAM_SHA.Substring(0, 12)) (Windows x64)" --notes "$notes" --latest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
