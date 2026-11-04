@@ -12,6 +12,7 @@ public sealed class SAV4HGSS : SAV4, IBoxDetailName, IBoxDetailWallpaper
     public SAV4HGSS() : base(GeneralSize, StorageSize)
     {
         Initialize();
+        Version = GameVersion.HGSS;
         Mystery = new MysteryBlock4HGSS(this, GeneralBuffer.Slice(OffsetMystery, MysteryBlock4HGSS.Size));
         Dex = new Zukan4(this, GeneralBuffer[PokeDex..]);
     }
@@ -46,11 +47,7 @@ public sealed class SAV4HGSS : SAV4, IBoxDetailName, IBoxDetailWallpaper
         new(5, 0x2D000, 0x1D60), // Battle Video (Other Videos 3)
     ];
 
-    private void Initialize()
-    {
-        Version = GameVersion.HGSS;
-        GetSAVOffsets();
-    }
+    private void Initialize() => GetSAVOffsets();
 
     protected override Memory<byte> GetFinalData()
     {
@@ -281,6 +278,8 @@ public sealed class SAV4HGSS : SAV4, IBoxDetailName, IBoxDetailWallpaper
         // clear remaining callers
         PokeGearClearAllCallers(index);
     }
+
+    public SafariZone4 Safari => new(GeneralBuffer.Slice(0xC13C, SafariZone4.SIZE)); // 0x5F8
 
     public Pokeathlon4 Pokeathlon => new(GeneralBuffer.Slice(0xD9D4, Pokeathlon4.SIZE)); // 0xB80
 
