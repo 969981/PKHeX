@@ -36,7 +36,7 @@ jobs:
         if: startsWith(github.event.head_commit.message, 'release:')
         shell: pwsh
         run: |
-          $asset = 'PKHeX-Bank-BulkStorage-CloneAll-20261005-r2-win-x64.zip'
+          $asset = 'PKHeX-Bank-BulkStorage-CloneAll-20261104-0660d1e1-win-x64.zip'
           if (Test-Path $asset) { Remove-Item $asset -Force }
           Compress-Archive -Path publish\* -DestinationPath $asset -CompressionLevel Optimal
 
@@ -46,11 +46,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = 'bank-bulk-clone-20261005-r2'
-          $asset = 'PKHeX-Bank-BulkStorage-CloneAll-20261005-r2-win-x64.zip'
+          $tag = 'bank-bulk-clone-20261104-0660d1e1-r1'
+          $asset = 'PKHeX-Bank-BulkStorage-CloneAll-20261104-0660d1e1-win-x64.zip'
           $notes = @'
           ## Changes
-          - Includes the 2026-10-05 BulkStorage handling-trainer legality fix.
+          - Synced all 27 kwsch/PKHeX master commits through 0660d1e1 (2026-11-01).
+          - Retains official HOME/Gen3 legality logic and the BulkStorage handling-trainer fix.
           - Restores compatibility with legacy compact Pokémon Bank images sized `0xACA48` whose revision field is already Gen7 / revision 2.
           - These compact Gen7 images are preserved at `0xACA48` instead of being rejected or incorrectly forced through the Gen6 upgrade path.
           - Official compact Gen6 / revision 1 Bank images still upgrade to the current full `0xBB518` layout.
@@ -64,4 +65,4 @@ jobs:
           - Core test suite passed with the workflow's existing baseline exclusion.
           - Release-mode Win-x64 publish passed.
           '@
-          gh release create $tag $asset --target $env:GITHUB_SHA --title 'PKHeX Bank BulkStorage Clone-All 2026-10-05 r2' --notes $notes
+          gh release create $tag $asset --target $env:GITHUB_SHA --title 'PKHeX Bank BulkStorage Clone-All 2026-11-04 (upstream 0660d1e1)' --notes $notes
