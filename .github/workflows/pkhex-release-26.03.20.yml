@@ -1,0 +1,89 @@
+name: PKHeX - Release historical 26.03.20
+
+# One-time historical build: the workflow only runs automatically when this file
+# is introduced or changed on the repository's default branch (trash-test).
+on:
+  push:
+    branches: [trash-test]
+    paths:
+      - '.github/workflows/pkhex-release-26.03.20.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pkhex-historical-release-26-03-20
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and release official 26.03.20 sources (Windows x64)
+    runs-on: windows-latest
+    steps:
+      - name: Check out original upstream release tag
+        uses: actions/checkout@v4
+        with:
+          ref: '26.03.20'
+          persist-credentials: false
+
+      - name: Verify historical release source
+        shell: pwsh
+        run: |
+          $expected = 'a43b6a5d32604d178a2872966cb7a7c7c67007f9'
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $expected) { throw "Unexpected source commit: $actual (expected $expected)" }
+          $props = Get-Content 'Directory.Build.props' -Raw
+          if ($props -notmatch '<Version>26\.03\.20</Version>') { throw 'Unexpected PKHeX version in Directory.Build.props' }
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish PKHeX Windows x64
+        shell: pwsh
+        run: |
+          dotnet publish PKHeX.WinForms/PKHeX.WinForms.csproj --configuration Release --runtime win-x64 --self-contained false --output publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path 'publish/PKHeX.exe')) { throw 'Expected publish/PKHeX.exe missing' }
+
+      - name: Bundle release ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Compress-Archive -Path 'publish/*' -DestinationPath 'dist/PKHeX-26.03.20-win-x64.zip' -Force
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PKHeX-26.03.20-win-x64
+          path: dist/PKHeX-26.03.20-win-x64.zip
+          if-no-files-found: error
+
+      - name: Publish historical GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '26.03.20'
+          $repo = $env:GITHUB_REPOSITORY
+          gh release view $tag --repo $repo *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; leaving it unchanged."
+            exit 0
+          }
+
+          $notes = @"
+          Historical Windows x64 build of PKHeX 26.03.20 from the original, unmodified official source tag.
+
+          - Upstream: https://github.com/kwsch/PKHeX/releases/tag/26.03.20
+          - Exact source commit: a43b6a5d32604d178a2872966cb7a7c7c67007f9
+          - Framework-dependent Windows x64 executable; requires .NET 10 Desktop Runtime.
+          - PKHeX Raid Plugin 2.0.0 was released for PKHeX 26.03.20: https://github.com/Leanny/PKHeX_Raid_Plugin/releases/tag/2.0.0 (plugin not included).
+
+          This is an independently compiled community mirror package, not an official Project Pokemon binary. Newer automatic upstream releases and Bank feature releases are unchanged.
+          "@
+
+          gh release create $tag 'dist/PKHeX-26.03.20-win-x64.zip' --repo $repo --verify-tag --title 'PKHeX 26.03.20 (Windows x64)' --notes $notes --latest=false
+          if ($LASTEXITCODE -ne 0) { throw "Could not publish historical release $tag" }
