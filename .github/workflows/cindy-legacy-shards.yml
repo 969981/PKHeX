@@ -1,0 +1,133 @@
+name: Cindy Gen3-5 sharded living dex
+on:
+  push:
+    branches: [feat/cindy-legacy-shards]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shard:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        include: [{"gen":3,"first":1,"last":129,"shiny":false},{"gen":3,"first":130,"last":258,"shiny":false},{"gen":3,"first":259,"last":386,"shiny":false},{"gen":3,"first":1,"last":129,"shiny":true},{"gen":3,"first":130,"last":258,"shiny":true},{"gen":3,"first":259,"last":386,"shiny":true},{"gen":4,"first":1,"last":165,"shiny":false},{"gen":4,"first":166,"last":330,"shiny":false},{"gen":4,"first":331,"last":493,"shiny":false},{"gen":4,"first":1,"last":165,"shiny":true},{"gen":4,"first":166,"last":330,"shiny":true},{"gen":4,"first":331,"last":493,"shiny":true},{"gen":5,"first":1,"last":217,"shiny":false},{"gen":5,"first":218,"last":434,"shiny":false},{"gen":5,"first":435,"last":649,"shiny":false},{"gen":5,"first":1,"last":217,"shiny":true},{"gen":5,"first":218,"last":434,"shiny":true},{"gen":5,"first":435,"last":649,"shiny":true}]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: 969981/PKHeX-Plugins_CHS
+          ref: e2cbf30d025419b384d6453aa294944553b34346
+          path: PKHeX-Plugins/PKHeX-Plugins_CHS
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.103'
+      - name: Prepare legacy collection
+        shell: pwsh
+        run: ./tools/CindyDex/prepare.ps1
+      - name: Build
+        shell: pwsh
+        run: dotnet build PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release
+      - name: Generate independent shard
+        shell: pwsh
+        run: dotnet run --no-build --project PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release -- legacy-shard ${{ matrix.gen }} ${{ matrix.first }} ${{ matrix.last }} ${{ matrix.shiny }} output
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cindy-Gen${{ matrix.gen }}-shard-${{ matrix.first }}-${{ matrix.shiny }}
+          path: output/
+          if-no-files-found: warn
+  assemble:
+    needs: shard
+    if: ${{ always() && !cancelled() }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        gen: [3,4,5]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: 969981/PKHeX-Plugins_CHS
+          ref: e2cbf30d025419b384d6453aa294944553b34346
+          path: PKHeX-Plugins/PKHeX-Plugins_CHS
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.103'
+      - name: Prepare legacy collection
+        shell: pwsh
+        run: ./tools/CindyDex/prepare.ps1
+      - name: Build
+        shell: pwsh
+        run: dotnet build PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Cindy-Gen${{ matrix.gen }}-shard-*
+          path: baseline
+      - name: Assemble four save collections
+        shell: pwsh
+        run: dotnet run --no-build --project PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release -- legacy-assemble ${{ matrix.gen }} baseline output
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cindy-Gen${{ matrix.gen }}-legacy-four-collections
+          path: output/
+          if-no-files-found: warn
+      - name: Validate coverage
+        shell: python
+        run: |
+          import csv
+          rows=list(csv.DictReader(open('output/manifest.tsv',encoding='utf-8-sig'),delimiter='\t'))
+          maximum={3:386,4:493,5:649}[${{ matrix.gen }}]
+          errors=[r for r in rows if r['Status'].startswith(('MISSING:','ERROR:'))]
+          for mode in ['AllNonShiny','AllShiny','HOME-NonShiny','HOME-Shiny']:
+              data=[r for r in rows if r['Mode']==mode and r.get('OT')]
+              missing=set(range(1,maximum+1))-{int(r['Key'].split('-')[0]) for r in data}
+              print(mode,len(data),'missing',sorted(missing),'6V',sum(r['IVTotal']=='186' for r in data))
+              if missing or not any(r['Mode']=='Save-'+mode and r['Status'].startswith('SAVE_VERIFIED:') for r in rows): errors.append(mode)
+              if any((mode.endswith('NonShiny') and r['Shiny']=='True') or (mode.startswith('HOME-') and r['HeldItem']!='0') for r in data): errors.append(mode+' policy')
+          if errors: raise SystemExit('Incomplete candidate: '+str(len(errors)))
+  events:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        gen: [3,4,5]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: 969981/PKHeX-Plugins_CHS
+          ref: e2cbf30d025419b384d6453aa294944553b34346
+          path: PKHeX-Plugins/PKHeX-Plugins_CHS
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.103'
+      - name: Prepare legacy collection
+        shell: pwsh
+        run: ./tools/CindyDex/prepare.ps1
+      - name: Build
+        shell: pwsh
+        run: dotnet build PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release
+      - name: Generate separate official event archive
+        shell: pwsh
+        run: dotnet run --no-build --project PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release -- legacy-events ${{ matrix.gen }} output
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cindy-Gen${{ matrix.gen }}-legacy-events
+          path: output/
+          if-no-files-found: warn

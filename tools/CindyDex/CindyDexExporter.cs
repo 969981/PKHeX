@@ -510,6 +510,111 @@ namespace PKHeX.Core.AutoMod
             }
         }
 
+
+        private static void SetupLegacy(Profile p)
+        {
+            APILegality.UseTrainerData=false;
+            APILegality.GameVersionPriority=GameVersionPriorityType.PriorityOrder;
+            APILegality.PriorityOrder=[..p.Games];
+            APILegality.MatchRequestedBuild=true;
+            APILegality.RequestedNatureMatchPolicy=RequestedNatureMatchPolicy.NativeOnly;
+            APILegality.ConstrainedIVStrategy=CorrelationConstrainedIVStrategy.PreferHighestLegalIVs;
+            Legalizer.EnableEasterEggs=false;
+            EncounterEvent.RefreshMGDB();
+        }
+        private const string ManifestHeader="Gen\tMode\tKey\tStatus\tOriginVersion\tOriginGen\tOT\tTID16\tID32\tShiny\tIVTotal\tLanguage\tNature\tHP_IV\tATK_IV\tDEF_IV\tSPA_IV\tSPD_IV\tSPE_IV\tPreferredNature\tHeldItem\tEV_HP\tEV_ATK\tEV_DEF\tEV_SPA\tEV_SPD\tEV_SPE\tMove1\tMove2\tMove3\tMove4";
+        private static GameVersion LegacyCarrier(Profile p) => p.Gen switch {4=>GameVersion.Pt,5=>GameVersion.B2,_=>p.Games[0]};
+        public static void RunLegacyShard(int generation,int first,int last,bool shiny,string root)
+        {
+            var p=Profiles.Single(x=>x.Gen==generation);
+            using var scope=APILegality.EnterSettingsScope();
+            SetupLegacy(p);
+            Directory.CreateDirectory(root);
+            using var log=new StreamWriter(Path.Combine(root,"manifest.tsv"),false,Encoding.UTF8);
+            log.AutoFlush=true;log.WriteLine(ManifestHeader);
+            var save=Trainer(p,LegacyCarrier(p),LanguageID.Japanese);
+            RecentTrainerCache.SetRecentTrainer(save);
+            // Shard range is consumed by the CI-only ModLogic overlay.
+            Environment.SetEnvironmentVariable("CINDY_FIRST",first.ToString());
+            Environment.SetEnvironmentVariable("CINDY_LAST",last.ToString());
+            Environment.SetEnvironmentVariable("CINDY_FAST","1");
+            APILegality.Timeout=8;
+            var cfg=new LivingDexConfig
+            {
+                IncludeForms=true,SetShiny=shiny,UseRecommendedBattleBuild=true,
+                UseRecommendedBattleNature=true,UseRecommendedBattleIVs=true,
+                UseRecommendedBattleEVs=true,UseRecommendedBattleMoves=true,
+                LivingDexTargetGeneration=(byte)p.Gen,LivingDexTargetVersion=p.Games[0],
+            };
+            var mode=shiny?"AllShiny":"AllNonShiny";
+            var accepted=new HashSet<(ushort,byte)>();
+            var summary=save.GenerateLivingDex(save.Personal,cfg,pk=>
+            {
+                if(pk.Species<first || pk.Species>last || pk.GetType()!=save.PKMType || pk.IsEgg || !NormalizeCindy(pk,p) || !new LegalityAnalysis(pk).Valid) return;
+                if(!shiny && pk.IsShiny) return;
+                if(!accepted.Add((pk.Species,pk.Form)))return;
+                Write(log,root,generation,mode,$"{pk.Species:D4}-{pk.Form:D2}",pk,pk.IsShiny!=shiny?"NONSHINY_FALLBACK":Identity(pk,p)?"OK":"EVENT_OT_EXCEPTION");
+            },progress=>Console.WriteLine($"Gen{generation} {mode} {first}-{last}: {progress}/{last-first+1} species workers completed"),CancellationToken.None);
+            File.WriteAllText(Path.Combine(root,"diagnostics.json"),JsonSerializer.Serialize(summary));
+            foreach(var target in summary.FailedTargets)
+                log.WriteLine($"{generation}\t{mode}\t{target.Species:D4}-{target.Form:D2}\tMISSING:ENGINE_TARGET");
+            Console.WriteLine($"Gen{generation} {mode} {first}-{last} accepted {accepted.Count}");
+        }
+        public static void RunLegacyEvents(int generation,string root)
+        {
+            var p=Profiles.Single(x=>x.Gen==generation);
+            using var scope=APILegality.EnterSettingsScope();
+            SetupLegacy(p);
+            Directory.CreateDirectory(root);
+            using var log=new StreamWriter(Path.Combine(root,"manifest.tsv"),false,Encoding.UTF8);
+            log.AutoFlush=true;log.WriteLine(ManifestHeader);
+            var events=Events(p,root,log);
+            ExportSaveCopies(root,Trainer(p,p.Games[0],LanguageID.Japanese),"Events",events,log);
+        }
+        public static void AssembleLegacy(int generation,string baseline,string root)
+        {
+            var p=Profiles.Single(x=>x.Gen==generation);
+            using var scope=APILegality.EnterSettingsScope();SetupLegacy(p);
+            Directory.CreateDirectory(root);
+            using var log=new StreamWriter(Path.Combine(root,"manifest.tsv"),false,Encoding.UTF8);
+            log.AutoFlush=true;log.WriteLine(ManifestHeader);
+            var save=Trainer(p,LegacyCarrier(p),LanguageID.Japanese);
+            var collections=new Dictionary<string,List<PKM>>();
+            Dictionary<(ushort,byte),PKM> Load(string mode)
+            {
+                var result=new Dictionary<(ushort,byte),PKM>();
+                foreach(var file in Directory.EnumerateFiles(baseline,$"*.pk{generation}",SearchOption.AllDirectories))
+                {
+                    if(Path.GetFileName(Path.GetDirectoryName(file))!=mode) continue;
+                    var raw=File.ReadAllBytes(file);
+                    PKM pk=generation switch {3=>new PK3(raw),4=>new PK4(raw),_=>new PK5(raw)};
+                    if(!NormalizeCindy(pk,p) || !new LegalityAnalysis(pk).Valid || pk.IsEgg || (mode=="AllNonShiny" && pk.IsShiny))continue;
+                    var key=(pk.Species,pk.Form);
+                    if(!result.TryGetValue(key,out var prev) || (mode=="AllShiny" && pk.IsShiny&&!prev.IsShiny) || (pk.IsShiny==prev.IsShiny&&Quality(pk)>Quality(prev)))result[key]=pk;
+                }
+                return result;
+            }
+            var normal=Load("AllNonShiny");
+            var shiny=Load("AllShiny");
+            foreach(var (key,pk) in normal) if(!shiny.ContainsKey(key))shiny[key]=pk.Clone();
+            foreach(var (mode,data) in new[]{("AllNonShiny",normal),("AllShiny",shiny)})
+            {
+                foreach(var (key,pk) in data.OrderBy(x=>x.Key))
+                    Write(log,root,generation,mode,$"{key.Item1:D4}-{key.Item2:D2}",pk,mode=="AllShiny"&&!pk.IsShiny?"NONSHINY_FALLBACK":Identity(pk,p)?"OK":"EVENT_OT_EXCEPTION");
+                foreach(var species in Enumerable.Range(1,p.Max).Where(i=>!data.Keys.Any(x=>x.Item1==i)))
+                    log.WriteLine($"{generation}\t{mode}\t{species:D4}-00\tMISSING:SPECIES");
+                collections[mode]=data.OrderBy(x=>x.Key).Select(x=>x.Value).ToList();
+            }
+            collections["HOME-NonShiny"]=HomeCollection(p,root,"HOME-NonShiny",collections["AllNonShiny"],log);
+            collections["HOME-Shiny"]=HomeCollection(p,root,"HOME-Shiny",collections["AllShiny"],log);
+            foreach(var (mode,entries) in collections)
+            {
+                ExportSaveCopies(root,Trainer(p,p.Games[0],LanguageID.Japanese),mode,entries,log);
+                if(save.Version!=p.Games[0])ExportSaveCopies(root,save,mode,entries,log);
+            }
+            Console.WriteLine($"Gen{generation} normal species={normal.Keys.Select(x=>x.Item1).Distinct().Count()} shiny collection species={shiny.Keys.Select(x=>x.Item1).Distinct().Count()}");
+        }
+
         public static void Run(string root, int? generation = null, SaveFile? originalSave = null)
         {
             if (originalSave != null && originalSave.Generation != generation)

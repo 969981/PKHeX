@@ -34,3 +34,27 @@ $helper = @'
 '@
 $s = $s.Replace($anchor, $helper + $anchor)
 Set-Content $p $s -Encoding utf8
+
+# CI-only legacy sharding; leave plugin upstream untouched.
+$p = "$plugin/PKHeX.Core.AutoMod/Enhancements/ModLogic.cs"
+$s = Get-Content $p -Raw
+$old = 'int nextSpeciesToStream = 1;'
+if (-not $s.Contains($old)) { throw 'Range overlay anchor missing' }
+$s = $s.Replace($old, @'
+int firstSpecies = int.TryParse(Environment.GetEnvironmentVariable("CINDY_FIRST"), out var first) ? Math.Clamp(first,1,personal.MaxSpeciesID) : 1;
+        int lastSpecies = int.TryParse(Environment.GetEnvironmentVariable("CINDY_LAST"), out var last) ? Math.Clamp(last,firstSpecies,personal.MaxSpeciesID) : personal.MaxSpeciesID;
+        int nextSpeciesToStream = firstSpecies;
+'@)
+$s = $s.Replace('Parallel.For(1, personal.MaxSpeciesID + 1, options, ProcessSpecies);','Parallel.For(firstSpecies, lastSpecies + 1, options, ProcessSpecies);')
+$s = $s.Replace('sav.Context is EntityContext.Gen7 or EntityContext.Gen9a ? 1 : LivingDexGenerateAttempts;', 'Environment.GetEnvironmentVariable("CINDY_FAST") == "1" || sav.Context is EntityContext.Gen7 or EntityContext.Gen9a ? 1 : LivingDexGenerateAttempts;')
+$s = $s.Replace('attempt < LivingDexCoreLegalizeAttempts;', 'attempt < (Environment.GetEnvironmentVariable("CINDY_FAST") == "1" ? 1 : LivingDexCoreLegalizeAttempts);')
+$s = $s.Replace('if (context is EntityContext.Gen7)' + [Environment]::NewLine + '        {', 'if (context is EntityContext.Gen7)' + [Environment]::NewLine + '        {')
+# Limit build fallback stages for the initial legacy coverage pass.
+$anchor = '        return Enum.GetValues<LivingDexBuildFallbackStage>();'
+if (-not $s.Contains($anchor)) { throw 'Fallback overlay anchor missing' }
+$s = $s.Replace($anchor, @'
+        if (Environment.GetEnvironmentVariable("CINDY_FAST") == "1")
+            return [LivingDexBuildFallbackStage.FullBuild, LivingDexBuildFallbackStage.WithoutCompetitiveStats];
+        return Enum.GetValues<LivingDexBuildFallbackStage>();
+'@)
+Set-Content $p $s -Encoding utf8
