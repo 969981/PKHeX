@@ -3,7 +3,7 @@ using System.IO;
 using PKHeX.Core;
 using PKHeX.Core.AutoMod;
 
-if (args.Length == 2 && args[0] == "ngc") return NgcDex.Generate(args[1]);
+if (args.Length is 2 or 3 && args[0] == "ngc") return NgcDex.Generate(args[1],args.Length==3?args[2]:"Both");
 if (args.Length == 4 && args[0] == "ngc-import") return NgcDex.Import(args[1],args[2],args[3]);
 
 if ((args.Length != 2 && args.Length != 3) || !int.TryParse(args[0], out var generation) || generation < 3 || generation > 7)
