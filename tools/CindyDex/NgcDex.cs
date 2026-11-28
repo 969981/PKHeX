@@ -8,7 +8,23 @@ using PKHeX.Core.AutoMod;
 
 internal static class NgcDex
 {
-    const ushort Tid = 55555, Sid = 18180;
+    const ushort Tid = 55555, PreferredSid = 18180;
+    static readonly (ushort SID,uint Seed) Trainer = ResolveTrainer();
+    static ushort Sid => Trainer.SID;
+    static (ushort SID,uint Seed) ResolveTrainer()
+    {
+        // Keep the public TID; choose the nearest SID with an actual GameCube naming-screen RNG seed.
+        for(int distance=0;distance<=ushort.MaxValue;distance++)
+        {
+            foreach(int candidate in new[]{PreferredSid+distance,PreferredSid-distance})
+            {
+                if(candidate<=0||candidate>ushort.MaxValue||candidate==Tid)continue;
+                if(MethodCXD.TryGetSeedTrainerID(Tid,(ushort)candidate,out uint seed))
+                    return ((ushort)candidate,seed);
+            }
+        }
+        throw new InvalidOperationException("No reachable GameCube trainer ID for requested TID.");
+    }
     const string OT = "Ｃｉｎｄｙ";
     static bool Identity(PKM p) => p.TID16 == Tid && p.SID16 == Sid && p.OriginalTrainerName.Normalize(System.Text.NormalizationForm.FormKC) == "Cindy";
     static int IVTotal(PKM p) => p.IV_HP+p.IV_ATK+p.IV_DEF+p.IV_SPA+p.IV_SPD+p.IV_SPE;
@@ -43,6 +59,8 @@ internal static class NgcDex
     public static int Generate(string root, string onlyGame = "Both")
     {
         Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root,"trainer-rng.tsv"),$"TID\tSID\tOriginSeed\tPreferredSID\n{Tid}\t{Sid}\t{Trainer.Seed:X8}\t{PreferredSid}\n");
+        Console.WriteLine($"Verified GameCube Trainer TID={Tid} SID={Sid} naming seed={Trainer.Seed:X8}");
         EncounterEvent.RefreshMGDB();
         var trainer = new SimpleTrainerInfo(GameVersion.CXD) { OT=OT,TID16=Tid,SID16=Sid,Gender=0,Language=(int)LanguageID.Japanese,Generation=3,Context=EntityContext.Gen3 };
         using var audit = new StreamWriter(Path.Combine(root,"candidate-audit.tsv")); audit.AutoFlush=true;
@@ -79,7 +97,9 @@ internal static class NgcDex
                         {
                             try
                             {
-                                var criteria=attempt==0?perfect:attempt==1?basic with {Nature=nature}:basic;
+                                bool starter=enc is EncounterStarter3Colo || (enc is EncounterStatic3XD && enc.Species==133);
+                                // Starters have PID/IV linked to TID/SID, so do not request perfect IVs first.
+                                var criteria=starter?(attempt==0?basic with {Nature=nature}:basic):(attempt==0?perfect:attempt==1?basic with {Nature=nature}:basic);
                                 var pk=enc.ConvertToPKM(trainer,criteria);
                                 // Encounter constructors can leave the GameCube region uninitialized.
                                 // Preserve generated identity, PID/IV and encounter provenance; only encode region and strings.
