@@ -68,6 +68,8 @@ namespace PKHeX.Core.AutoMod
             {
                 if (pk.Species > p.Max || pk.Format != p.Gen || pk.IsEgg || !new LegalityAnalysis(pk).Valid)
                     return;
+                if (pk.GetType() != save.PKMType)
+                    return;
                 if (!Identity(pk, p) && !FixedEvent(pk))
                     return;
                 var key = (pk.Species, pk.Form);
@@ -103,7 +105,8 @@ namespace PKHeX.Core.AutoMod
         {
             // One output per database entry, not merely one per species/card ID.
             var results = new List<PKM>();
-            var gifts = EncounterEvent.GetAllEvents().Where(x => x.Generation == p.Gen).ToArray();
+            var destination = Trainer(p, p.Gen == 7 ? GameVersion.US : p.Games[0], p.Gen == 7 ? LanguageID.ChineseS : LanguageID.Japanese);
+            var gifts = EncounterEvent.GetAllEvents().Where(x => x.Generation == p.Gen && x.Context == destination.Context && x.Species > 0 && x.Species <= p.Max).ToArray();
             var languages = p.Gen == 7
                 ? new[] { (LanguageID)9, LanguageID.Japanese, LanguageID.English }
                 : new[] { LanguageID.Japanese, LanguageID.English };
@@ -123,7 +126,7 @@ namespace PKHeX.Core.AutoMod
                             PKM pk;
                             try { pk = gift.ConvertToPKM(tr); }
                             catch { continue; }
-                            if (pk.Format != p.Gen || pk.Species != gift.Species ||
+                            if (pk.GetType() != destination.PKMType || pk.Format != p.Gen || pk.Species != gift.Species ||
                                 pk.Form != gift.Form || !new LegalityAnalysis(pk).Valid)
                                 continue;
                             var la = new LegalityAnalysis(pk);
@@ -156,7 +159,12 @@ namespace PKHeX.Core.AutoMod
             var compatible = new List<PKM>();
             foreach (var pk in entries)
             {
-                if (pk.Format != template.Generation || !template.Personal.IsPresentInGame(pk.Species, pk.Form))
+                if (pk.GetType() != template.PKMType)
+                {
+                    log.WriteLine($"{template.Generation}\tSave-{mode}\t{pk.Species:D4}-{pk.Form:D2}\tERROR:INCOMPATIBLE_ENTITY_TYPE:{pk.GetType().Name}->{template.PKMType.Name}");
+                    continue;
+                }
+                if (pk.Format != template.Generation || pk.Species > template.MaxSpeciesID || !template.Personal.IsPresentInGame(pk.Species, pk.Form))
                 {
                     log.WriteLine($"{template.Generation}\tSave-{mode}\t{pk.Species:D4}-{pk.Form:D2}\tSAVE_UNSUPPORTED_FORM");
                     continue;
@@ -172,8 +180,17 @@ namespace PKHeX.Core.AutoMod
             foreach (var chunk in compatible.Chunk(capacity))
             {
                 var copy = template.Clone();
-                for (int i = 0; i < capacity; i++)
-                    copy.SetBoxSlotAtIndex(i < chunk.Length ? chunk[i].Clone() : copy.BlankPKM, i, EntityImportSettings.None);
+                try
+                {
+                    for (int i = 0; i < capacity; i++)
+                        copy.SetBoxSlotAtIndex(i < chunk.Length ? chunk[i].Clone() : copy.BlankPKM, i, EntityImportSettings.None);
+                }
+                catch (Exception ex)
+                {
+                    log.WriteLine($"{template.Generation}\tSave-{mode}\t{template.Version}-Part{part + 1:D2}\tERROR:WRITE:{ex.GetType().Name}:{ex.Message}");
+                    log.Flush();
+                    return;
+                }
                 InitializeFooter(copy);
                 var data = copy.Write();
                 var read = SaveUtil.GetSaveFile(data);

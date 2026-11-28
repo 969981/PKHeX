@@ -1,7 +1,7 @@
 name: Cindy Gen3-7 save generation
 on:
   push:
-    branches: [feat/cindy-dex-saves]
+    branches: [feat/cindy-dex-saves, fix/cindy-gen7-save-format]
   pull_request:
     branches: [master]
     paths: ['tools/CindyDex/**', '.github/workflows/cindy-saves.yml']
@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gen: [3,4,5,6,7]
+        gen: ${{ fromJSON(github.ref_name == 'fix/cindy-gen7-save-format' && '[7]' || '[3,4,5,6,7]') }}
     steps:
       - uses: actions/checkout@v4
         with:
