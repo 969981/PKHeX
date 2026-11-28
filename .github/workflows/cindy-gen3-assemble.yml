@@ -1,0 +1,57 @@
+name: Cindy Gen3 standalone assembly
+on:
+  push:
+    branches: [fix/cindy-gen3-assemble]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  assemble:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: 969981/PKHeX-Plugins_CHS
+          ref: e2cbf30d025419b384d6453aa294944553b34346
+          path: PKHeX-Plugins/PKHeX-Plugins_CHS
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.103'
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 46118875360
+          github-token: ${{ github.token }}
+          pattern: Cindy-Gen3-shard-*
+          path: baseline
+      - name: Prepare and build
+        shell: pwsh
+        run: |
+          ./tools/CindyDex/prepare.ps1
+          dotnet build PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release
+          exit $LASTEXITCODE
+      - name: Assemble existing Gen3 entities
+        shell: pwsh
+        run: dotnet run --no-build --project PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release -- legacy-assemble 3 baseline output
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cindy-Gen3-standalone-four-collections
+          path: output/
+          if-no-files-found: warn
+      - name: Verify coverage and actual save files
+        shell: python
+        run: |
+          import csv,pathlib
+          rows=list(csv.DictReader(open('output/manifest.tsv',encoding='utf-8-sig'),delimiter='\t'))
+          errors=[]
+          for mode in ['AllNonShiny','AllShiny','HOME-NonShiny','HOME-Shiny']:
+              data=[r for r in rows if r['Mode']==mode and r.get('OT')]
+              missing=set(range(1,387))-{int(r['Key'].split('-')[0]) for r in data}
+              verified=[r for r in rows if r['Mode']=='Save-'+mode and r['Status'].startswith('SAVE_VERIFIED:')]
+              files=list(pathlib.Path('output/Gen3/Saves').glob('*/'+mode+'/*/*.sav'))
+              print(mode,'entries',len(data),'missing',sorted(missing),'actual shiny',sum(r['Shiny']=='True' for r in data),'verified saves',len(files))
+              if missing or not verified or not files: errors.append(mode)
+              if any((mode.endswith('NonShiny') and r['Shiny']=='True') or (mode.startswith('HOME-') and r['HeldItem']!='0') for r in data): errors.append(mode+' policy')
+          if errors: raise SystemExit('Candidate incomplete: '+str(errors))
