@@ -48,6 +48,8 @@ namespace PKHeX.Core.AutoMod
             return bytes;
         }
 
+        public static Nature GetNgcRecommendedNature(PKM pk) => LivingDexRecommendedBuild.GetProfile(pk).Nature;
+
         private static bool Preferred(PKM pk) => pk.Nature == LivingDexRecommendedBuild.GetProfile(pk).Nature;
         private static int Quality(PKM pk) => (Preferred(pk) ? 1000000 : 0) + (IVTotal(pk) == 186 ? 100000 : 0) + IVTotal(pk);
         private static bool FixedEvent(PKM pk) => new LegalityAnalysis(pk).EncounterMatch is MysteryGift || pk.FatefulEncounter;
