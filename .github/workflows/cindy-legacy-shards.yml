@@ -1,17 +1,33 @@
-name: Cindy Gen3-5 sharded living dex
+name: Cindy Gen3-5 egg-first quick living dex
 on:
   push:
-    branches: [feat/cindy-legacy-shards]
+    branches: [feat/cindy-legacy-egg-first]
   workflow_dispatch:
 permissions:
   contents: read
+  actions: write
 jobs:
+  cancel-old:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel superseded Gen3-5 runs only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in 46113060233 46114586029 46118443127; do
+            status=$(gh api repos/${{ github.repository }}/actions/runs/$id --jq .status)
+            if [ "$status" != completed ]; then
+              gh api --method POST repos/${{ github.repository }}/actions/runs/$id/cancel || exit 1
+            fi
+          done
   shard:
+    needs: cancel-old
+    if: ${{ always() && !cancelled() }}
     runs-on: windows-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 12
+      max-parallel: 9
       matrix:
         include: [{"gen":3,"first":1,"last":129,"shiny":false},{"gen":3,"first":130,"last":258,"shiny":false},{"gen":3,"first":259,"last":386,"shiny":false},{"gen":3,"first":1,"last":129,"shiny":true},{"gen":3,"first":130,"last":258,"shiny":true},{"gen":3,"first":259,"last":386,"shiny":true},{"gen":4,"first":1,"last":165,"shiny":false},{"gen":4,"first":166,"last":330,"shiny":false},{"gen":4,"first":331,"last":493,"shiny":false},{"gen":4,"first":1,"last":165,"shiny":true},{"gen":4,"first":166,"last":330,"shiny":true},{"gen":4,"first":331,"last":493,"shiny":true},{"gen":5,"first":1,"last":217,"shiny":false},{"gen":5,"first":218,"last":434,"shiny":false},{"gen":5,"first":435,"last":649,"shiny":false},{"gen":5,"first":1,"last":217,"shiny":true},{"gen":5,"first":218,"last":434,"shiny":true},{"gen":5,"first":435,"last":649,"shiny":true}]
     steps:
@@ -79,7 +95,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Cindy-Gen${{ matrix.gen }}-legacy-four-collections
+          name: Cindy-Gen${{ matrix.gen }}-egg-first-four-collections
           path: output/
           if-no-files-found: warn
       - name: Validate coverage
@@ -97,6 +113,8 @@ jobs:
               if any((mode.endswith('NonShiny') and r['Shiny']=='True') or (mode.startswith('HOME-') and r['HeldItem']!='0') for r in data): errors.append(mode+' policy')
           if errors: raise SystemExit('Incomplete candidate: '+str(len(errors)))
   events:
+    needs: cancel-old
+    if: ${{ always() && !cancelled() }}
     runs-on: windows-latest
     timeout-minutes: 45
     strategy:
@@ -128,6 +146,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Cindy-Gen${{ matrix.gen }}-legacy-events
+          name: Cindy-Gen${{ matrix.gen }}-egg-first-events
           path: output/
           if-no-files-found: warn

@@ -58,3 +58,49 @@ $s = $s.Replace($anchor, @'
         return Enum.GetValues<LivingDexBuildFallbackStage>();
 '@)
 Set-Content $p $s -Encoding utf8
+
+# Egg-first coverage: one relaxed encounter pass rather than repeated full build searches.
+$p = "$plugin/PKHeX.Core.AutoMod/Enhancements/ModLogic.cs"
+$s = Get-Content $p -Raw
+$anchor = '        // ZA''s shiny/Alpha encounters are seed-correlated.'
+if (-not $s.Contains($anchor)) { throw 'Fast path anchor missing' }
+$fast = @'
+        if (Environment.GetEnvironmentVariable("CINDY_FAST") == "1" && sav.Generation is >= 3 and <= 5)
+        {
+            var relaxed = cfg with
+            {
+                SetShiny = requireShiny, UseRecommendedBattleBuild = false,
+                UseRecommendedBattleNature = false, UseRecommendedBattleIVs = false,
+                UseRecommendedBattleEVs = false, UseRecommendedBattleMoves = false,
+            };
+            PKM? candidate = AddPKM(sav,tr,species,form,relaxed,customBuild,trainerOverride:tr);
+            if (!IsAcceptedLivingDexResult(candidate,species,form,true,requireShiny) ||
+                (!cfg.SetShiny && candidate?.IsShiny==true))
+            {
+                failureReason = LivingDexFailureReason.NoEncounter;
+                failureReport = "Initial egg-first bounded encounter pass did not return a matching legal individual.";
+                return null;
+            }
+            // Apply each battle field independently, keeping the last fully legal state.
+            // Never overwrite a correlated PID/IV or nature when that makes the individual illegal.
+            var best = candidate!;
+            var flags = relaxed with {UseRecommendedBattleBuild=true};
+            foreach (var stage in new[]
+            {
+                flags with {UseRecommendedBattleEVs=true},
+                flags with {UseRecommendedBattleMoves=true},
+                flags with {UseRecommendedBattleNature=true},
+                flags with {UseRecommendedBattleIVs=true},
+            })
+            {
+                var improved = ApplyFastRecommendedBattleBuild(best,stage);
+                if (improved is not null && improved.IsShiny==best.IsShiny &&
+                    IsAcceptedLivingDexResult(improved,species,form,true,requireShiny))
+                    best=improved;
+            }
+            return best;
+        }
+
+'@
+$s = $s.Replace($anchor, $fast + $anchor)
+Set-Content $p $s -Encoding utf8

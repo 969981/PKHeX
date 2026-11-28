@@ -538,7 +538,8 @@ namespace PKHeX.Core.AutoMod
             Environment.SetEnvironmentVariable("CINDY_FIRST",first.ToString());
             Environment.SetEnvironmentVariable("CINDY_LAST",last.ToString());
             Environment.SetEnvironmentVariable("CINDY_FAST","1");
-            APILegality.Timeout=8;
+            APILegality.Timeout=6;
+            EncounterMovesetGenerator.PriorityList = [EncounterTypeGroup.Egg, EncounterTypeGroup.Slot, EncounterTypeGroup.Static, EncounterTypeGroup.Mystery, EncounterTypeGroup.Trade];
             var cfg=new LivingDexConfig
             {
                 IncludeForms=true,SetShiny=shiny,UseRecommendedBattleBuild=true,
@@ -547,12 +548,16 @@ namespace PKHeX.Core.AutoMod
                 LivingDexTargetGeneration=(byte)p.Gen,LivingDexTargetVersion=p.Games[0],
             };
             var mode=shiny?"AllShiny":"AllNonShiny";
+            using var origins=new StreamWriter(Path.Combine(root,"origin-audit.tsv"));
+            origins.AutoFlush=true;origins.WriteLine("Key\tShiny\tEggOrigin\tOriginVersion\tIVTotal\tNature");
             var accepted=new HashSet<(ushort,byte)>();
             var summary=save.GenerateLivingDex(save.Personal,cfg,pk=>
             {
                 if(pk.Species<first || pk.Species>last || pk.GetType()!=save.PKMType || pk.IsEgg || !NormalizeCindy(pk,p) || !new LegalityAnalysis(pk).Valid) return;
                 if(!shiny && pk.IsShiny) return;
                 if(!accepted.Add((pk.Species,pk.Form)))return;
+                var analysis=new LegalityAnalysis(pk);
+                origins.WriteLine($"{pk.Species:D4}-{pk.Form:D2}\t{pk.IsShiny}\t{analysis.EncounterOriginal.IsEgg}\t{pk.Version}\t{IVTotal(pk)}\t{pk.Nature}");
                 Write(log,root,generation,mode,$"{pk.Species:D4}-{pk.Form:D2}",pk,pk.IsShiny!=shiny?"NONSHINY_FALLBACK":Identity(pk,p)?"OK":"EVENT_OT_EXCEPTION");
             },progress=>Console.WriteLine($"Gen{generation} {mode} {first}-{last}: {progress}/{last-first+1} species workers completed"),CancellationToken.None);
             File.WriteAllText(Path.Combine(root,"diagnostics.json"),JsonSerializer.Serialize(summary));
