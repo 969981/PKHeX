@@ -363,6 +363,26 @@ namespace PKHeX.Core.AutoMod
                     string key=$"{target.Species:D4}-{target.Form:D2}";
                     if(current.ContainsKey(key)) continue;
                     PKM? best=null;
+                    // Use the existing verified Super Size Pumpkaboo as the evolution source.
+                    // A different size cannot be obtained merely by editing a Gourgeist form.
+                    if(target.Species==711 && current.TryGetValue("0710-03",out var pumpkin) && pumpkin.IsShiny==shiny)
+                    {
+                        var evolved=pumpkin.Clone();
+                        evolved.Species=711;
+                        evolved.CurrentLevel=100;
+                        evolved.IsNicknamed=false;
+                        evolved.Nickname=SpeciesName.GetSpeciesNameGeneration(711,evolved.Language,evolved.Format);
+                        evolved.RefreshAbility(evolved.AbilityNumber==4?2:evolved.AbilityNumber==2?1:0);
+                        if(current.TryGetValue("0711-00",out var reference))
+                        {
+                            evolved.Move1=reference.Move1; evolved.Move2=reference.Move2;
+                            evolved.Move3=reference.Move3; evolved.Move4=reference.Move4;
+                            evolved.HealPP();
+                        }
+                        evolved.ResetPartyStats(); evolved.RefreshChecksum();
+                        if(evolved.Form==3 && NormalizeCindy(evolved,p) && Identity(evolved,p) && new LegalityAnalysis(evolved).Valid)
+                        {best=evolved; audit.WriteLine($"{mode}\t{key}\tEVOLUTION_CANDIDATE\tSuper Size Pumpkaboo");}
+                    }
                     // Unown originates before Gen7. Generate with the final raw ID32
                     // in a Japanese source game, then use official Core conversion.
                     var sources=target.Species==201
@@ -383,7 +403,7 @@ namespace PKHeX.Core.AutoMod
                                 var pk=EntityConverter.ConvertToType(source,save.PKMType,out var conversion);
                                 if(pk==null || pk.Species!=target.Species || pk.Form!=target.Form || pk.IsShiny!=shiny ||
                                    !NormalizeCindy(pk,p) || !Identity(pk,p) || !new LegalityAnalysis(pk).Valid)
-                                { audit.WriteLine($"{mode}\t{key}\tREJECTED\t{version} {conversion} OT={pk?.OriginalTrainerName} ID={pk?.ID32} Lang={pk?.Language}"); continue; }
+                                { audit.WriteLine($"{mode}\t{key}\tREJECTED\t{version} {conversion} OT={pk?.OriginalTrainerName} ID={pk?.ID32} Lang={pk?.Language} Species={pk?.Species} Form={pk?.Form} Shiny={pk?.IsShiny} Legal={(pk==null?"null":new LegalityAnalysis(pk).Report().Replace('\r',' ').Replace('\n',' '))}"); continue; }
                                 if(best==null || Quality(pk)>Quality(best)) best=pk;
                                 if(IVTotal(best)==186 && Preferred(best)) break;
                             }
@@ -435,6 +455,15 @@ namespace PKHeX.Core.AutoMod
                                     pk.ID32=tr.ID32;
                                     pk.OriginalTrainerName=CindyName(pk.Language);
                                     if(pk.IsEgg && pk.EggMetDate==null) pk.EggMetDate=pk.MetDate;
+                                    pk.RefreshChecksum();
+                                }
+                                // Card 0142 is the April 2016 redistribution (Project Pokemon event archive).
+                                // Use a valid date inside its documented window only for malformed source dates.
+                                if(gift is WC6 {CardID:142,IsEgg:true} && pk.IsEgg && (pk.MetDate==null || pk.EggMetDate==null))
+                                {
+                                    var distributionDate=new DateOnly(2016,4,1);
+                                    if(pk.MetDate==null) pk.MetDate=distributionDate;
+                                    if(pk.EggMetDate==null) pk.EggMetDate=distributionDate;
                                     pk.RefreshChecksum();
                                 }
                                 if(pk.GetType()!=save.PKMType || pk.Species!=gift.Species || pk.Form!=gift.Form){Count("TYPE_OR_FORM");continue;}
