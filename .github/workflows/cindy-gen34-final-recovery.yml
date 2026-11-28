@@ -1,0 +1,74 @@
+name: Cindy Gen3-4 final exact recovery
+on:
+  push:
+    branches: [fix/cindy-gen34-final-recovery]
+    paths:
+      - '.github/workflows/cindy-gen34-final-recovery.yml'
+      - 'tools/CindyDex/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recover:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include: [{"gen":3,"shiny":false,"part":"normal-a","targets":"144:0,245:0,249:0"},{"gen":3,"shiny":false,"part":"normal-b","targets":"250:0,251:0,381:0,385:0"},{"gen":3,"shiny":true,"part":"shiny-a","targets":"251:0,385:0,386:0"},{"gen":4,"shiny":false,"part":"normal-a","targets":"249:0,251:0,385:0"},{"gen":4,"shiny":true,"part":"shiny-a","targets":"132:0,251:0,269:0"},{"gen":4,"shiny":true,"part":"shiny-b","targets":"350:0,385:0,416:0"},{"gen":4,"shiny":true,"part":"unown-0","targets":"201:0,201:1,201:2,201:3,201:4,201:5,201:6"},{"gen":4,"shiny":true,"part":"unown-1","targets":"201:7,201:8,201:9,201:10,201:11,201:12,201:13"},{"gen":4,"shiny":true,"part":"unown-2","targets":"201:14,201:15,201:16,201:17,201:18,201:19,201:20"},{"gen":4,"shiny":true,"part":"unown-3","targets":"201:21,201:22,201:23,201:24,201:25,201:26,201:27"}]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: 969981/PKHeX-Plugins_CHS
+          ref: e2cbf30d025419b384d6453aa294944553b34346
+          path: PKHeX-Plugins/PKHeX-Plugins_CHS
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.103'
+      - name: Prepare and build
+        shell: pwsh
+        run: |
+          ./tools/CindyDex/prepare.ps1
+          dotnet build PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release
+          exit $LASTEXITCODE
+      - name: Recover exact species and forms from alternate sources
+        shell: pwsh
+        run: |
+          $dll = (Get-ChildItem 'PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli/bin/Release' -Recurse -Filter CindyDex.Cli.dll | Select-Object -First 1).FullName
+          if (!$dll) { throw 'CLI missing' }
+          $gen = ${{ matrix.gen }}
+          $shiny = '${{ matrix.shiny }}'
+          $games = if ($gen -eq 3) { @('E','R','S','FR','LG') } else { @('HG','SS','Pt','D','P','E','FR','LG','R','S') }
+          New-Item -ItemType Directory -Force output | Out-Null
+          foreach ($target in '${{ matrix.targets }}'.Split(',')) {
+            $species,$form = $target.Split(':')
+            $accepted = 0
+            foreach ($game in $games) {
+              if ($species -eq '201' -and $game -in @('E','R','S')) { continue }
+              $dest = "output/species-$species/form-$form/$game"
+              New-Item -ItemType Directory -Force $dest | Out-Null
+              $args = @('"' + $dll + '"','legacy-final-target',$gen,$species,$form,$shiny,$game,$dest)
+              $proc = Start-Process dotnet -ArgumentList $args -PassThru -NoNewWindow -RedirectStandardOutput "$dest/stdout.log" -RedirectStandardError "$dest/stderr.log"
+              if (!$proc.WaitForExit(30000)) {
+                & taskkill /PID $proc.Id /T /F | Out-Null
+                "TIMEOUT $target $game" | Tee-Object -FilePath output/recovery.log -Append
+                continue
+              }
+              $pk = Get-ChildItem $dest -Recurse -Filter "*.pk$gen" | Select-Object -First 1
+              if ($proc.ExitCode -eq 0 -and $pk) {
+                $accepted++
+                "ACCEPTED $target $game" | Tee-Object -FilePath output/recovery.log -Append
+                $rows = Import-Csv "$dest/manifest.tsv" -Delimiter "`t"
+                if ($rows | Where-Object { $_.IVTotal -eq '186' -and $_.PreferredNature -eq 'True' -and $_.Status -eq 'OK' }) { break }
+              }
+            }
+            if ($accepted -eq 0) { "UNRESOLVED $target" | Tee-Object -FilePath output/recovery.log -Append }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cindy-Gen${{ matrix.gen }}-final-${{ matrix.part }}
+          path: output/
+          if-no-files-found: warn
