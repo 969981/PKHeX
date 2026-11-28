@@ -116,7 +116,7 @@ namespace PKHeX.Core.AutoMod
 
         private static bool Preferred(PKM pk) => pk.Nature == LivingDexRecommendedBuild.GetProfile(pk).Nature;
         private static int Quality(PKM pk) => (Preferred(pk) ? 1000000 : 0) + (IVTotal(pk) == 186 ? 100000 : 0) + IVTotal(pk);
-        private static bool FixedEvent(PKM pk) => new LegalityAnalysis(pk).EncounterMatch is MysteryGift || pk.FatefulEncounter;
+        private static bool FixedEvent(PKM pk) => new LegalityAnalysis(pk).EncounterMatch is MysteryGift or EncounterGift3 or EncounterGift3JPN or EncounterGift3NY || pk.FatefulEncounter;
 
         private static Dictionary<(ushort, byte), PKM> Generate(Profile p, SaveFile save, bool shiny, string root, StreamWriter log)
         {
@@ -680,6 +680,51 @@ namespace PKHeX.Core.AutoMod
                 }
             }
             Write(log,root,5,mode,key,best,best==null?"TARGET_UNRESOLVED":Identity(best,p)?"OK":"EVENT_OT_EXCEPTION");
+        }
+
+        private static IEnumerable<IEncounterable> NativeGen3EventCatalog()
+        {
+            var type=typeof(PKM).Assembly.GetType("PKHeX.Core.EncountersWC3",true)!;
+            foreach(var name in new[]{"Encounter_WC3","PCNY","PCJP"})
+            {
+                var array=(Array)(type.GetField(name,System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.Public|System.Reflection.BindingFlags.NonPublic)?.GetValue(null)
+                    ?? throw new InvalidOperationException("Missing Gen3 event table "+name));
+                foreach(var item in array)
+                    if(item is IEncounterable enc)yield return enc;
+            }
+        }
+
+        public static void RunGen3EventFinal(ushort species,bool shiny,string root)
+        {
+            var p=Profiles.Single(x=>x.Gen==3);
+            using var scope=APILegality.EnterSettingsScope();SetupLegacy(p);
+            Directory.CreateDirectory(root);
+            using var log=new StreamWriter(Path.Combine(root,"manifest.tsv"),false,Encoding.UTF8);
+            log.AutoFlush=true;log.WriteLine(ManifestHeader);
+            var mode=shiny?"AllShiny":"AllNonShiny";
+            PKM? best=null;
+            foreach(var enc in NativeGen3EventCatalog().Where(e=>e.Species==species&&!e.IsEgg&&(!shiny||e.Shiny!=Shiny.Never)))
+            foreach(var lang in new[]{LanguageID.Japanese,LanguageID.English})
+            {
+                var tr=Trainer(p,GameVersion.R,lang);
+                var blank=tr.BlankPKM;blank.Species=species;
+                var criteria=EncounterCriteria.Unrestricted with {Shiny=shiny?Shiny.Always:Shiny.Never};
+                for(int n=0;n<16;n++)
+                {
+                    try
+                    {
+                        var pk=enc.ConvertToPKM(tr,n==0?criteria with {Nature=LivingDexRecommendedBuild.GetProfile(blank).Nature}:criteria);
+                        pk.RefreshChecksum();
+                        if(pk is not PK3 || pk.Species!=species || pk.Form!=0 || pk.IsEgg || pk.IsShiny!=shiny)continue;
+                        var la=new LegalityAnalysis(pk);
+                        if(!la.Valid || la.EncounterOriginal is not (EncounterGift3 or EncounterGift3JPN or EncounterGift3NY))continue;
+                        if(!NormalizeCindy(pk,p))continue;
+                        if(best==null||Quality(pk)>Quality(best))best=pk;
+                    }
+                    catch(Exception ex) when(ex is ArgumentException or InvalidOperationException){Console.WriteLine(ex.Message);}
+                }
+            }
+            Write(log,root,3,mode,$"{species:D4}-00",best,best==null?"NO_LEGAL_EVENT_MATCH":"EVENT_OT_EXCEPTION");
         }
 
         public static void RunLegacyFinalTarget(int generation,ushort species,byte form,bool shiny,GameVersion game,string root)
