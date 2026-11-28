@@ -101,7 +101,7 @@ namespace PKHeX.Core.AutoMod
                 if (original.Form!=pk.Form) log.WriteLine($"{p.Gen}\t{mode}-Audit\t{key}\tNORMALIZED_FORM:{pk.Form}");
             }
             foreach(var pk in unique.Values.OrderBy(x=>x.Species).ThenBy(x=>x.Form))
-                Write(log,root,p.Gen,mode,$"{pk.Species:D4}-{pk.Form:D2}",pk,Identity(pk,p)?"HOME_STATIC_OK":"EVENT_OT_EXCEPTION");
+                Write(log,root,p.Gen,mode,$"{pk.Species:D4}-{pk.Form:D2}",pk,mode=="HOME-Shiny" && !pk.IsShiny ? "HOME_NONSHINY_FALLBACK" : mode=="HOME-NonShiny" && pk.IsShiny ? "HOME_SHINY_FALLBACK" : Identity(pk,p)?"HOME_STATIC_OK":"EVENT_OT_EXCEPTION");
             return unique.Values.OrderBy(x=>x.Species).ThenBy(x=>x.Form).ToList();
         }
 
