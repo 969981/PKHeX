@@ -1,14 +1,18 @@
 name: Cindy NGC collection
 on:
   push:
-    branches: [feat/cindy-ngc-dex]
+    branches: [fix/cindy-ngc-native-gender]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   ngc:
     runs-on: windows-latest
-    timeout-minutes: 360
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        game: [Colosseum, XD]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -33,32 +37,36 @@ jobs:
       - name: Generate NGC candidates
         shell: pwsh
         run: |
-          ./ngc-tool/CindyDex.Cli.exe ngc output 2>&1 | Tee-Object generate-ngc.log
+          ./ngc-tool/CindyDex.Cli.exe ngc output ${{ matrix.game }} 2>&1 | Tee-Object generate-ngc.log
           exit $LASTEXITCODE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Cindy-NGC-entities
+          name: Cindy-NGC-${{ matrix.game }}-55555-entities
           path: output/
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
-          name: Cindy-NGC-local-GCI-importer
+          name: Cindy-NGC-${{ matrix.game }}-local-GCI-importer
           path: ngc-tool/
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Cindy-NGC-logs
+          name: Cindy-NGC-${{ matrix.game }}-logs
           path: '*-ngc.log'
           if-no-files-found: warn
-      - name: Check coverage
+      - name: Check strict native output and report coverage
         shell: python
         run: |
-          import csv
-          with open('output/manifest.tsv',encoding='utf-8') as f: rows=list(csv.DictReader(f,delimiter='\t'))
-          for g in ['Colosseum','XD']:
-              for m in ['AllNonShiny','AllShiny']:
-                  r=[x for x in rows if x['Game']==g and x['Mode']==m]
-                  good=[x for x in r if x['Status'] in ['OK','NONSHINY_FALLBACK']]
-                  print(g,m,'species',len(set(x['Species'] for x in good)),'6V',sum(x['IVTotal']=='186' for x in good))
-          if any(x['Status'] not in ['OK','NONSHINY_FALLBACK'] for x in rows): raise SystemExit('Missing or incompatible candidates')
+          import csv,pathlib
+          with open('output/manifest.tsv',encoding='utf-8-sig') as f: rows=list(csv.DictReader(f,delimiter='\t'))
+          good=[x for x in rows if x['Status']=='OK']
+          assert good, 'No own-ID native candidates'
+          assert all(x['TID']=='55555' and x['Origin']=='CXD' and x['Gender'] in ('0','1','2') for x in good)
+          assert len({(x['Game'],x['Mode'],x['Species'],x['Form'],x['Gender']) for x in good})==len(good)
+          assert all((x['Shiny']=='True')==(x['Mode']=='AllShiny') for x in good)
+          for mode in ('AllNonShiny','AllShiny'):
+              a=[x for x in good if x['Mode']==mode]
+              print(mode,'species',len({x['Species'] for x in a}),'entities',len(a),'6V',sum(x['IVTotal']=='186' for x in a))
+          for status in ('LOCKED','UNRESOLVED','FIXED_OT_ONLY','FIXED_OT_EXCEPTION'):
+              print(status,sum(x['Status']==status for x in rows))
