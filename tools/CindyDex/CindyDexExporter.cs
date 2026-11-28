@@ -682,6 +682,81 @@ namespace PKHeX.Core.AutoMod
             Write(log,root,5,mode,key,best,best==null?"TARGET_UNRESOLVED":Identity(best,p)?"OK":"EVENT_OT_EXCEPTION");
         }
 
+        public static void RunLegacyFinalTarget(int generation,ushort species,byte form,bool shiny,GameVersion game,string root)
+        {
+            var p=Profiles.Single(x=>x.Gen==generation);
+            using var scope=APILegality.EnterSettingsScope();SetupLegacy(p);
+            Directory.CreateDirectory(root);
+            using var log=new StreamWriter(Path.Combine(root,"manifest.tsv"),false,Encoding.UTF8);
+            log.AutoFlush=true;log.WriteLine(ManifestHeader);
+            var destination=Trainer(p,LegacyCarrier(p),LanguageID.Japanese);
+            var source=Trainer(p,game,LanguageID.Japanese);
+            var mode=shiny?"AllShiny":"AllNonShiny";
+            var key=$"{species:D4}-{form:D2}";
+            var blank=source.BlankPKM;
+            blank.Species=species;blank.Form=form;blank.Gender=blank.GetSaneGender();
+            PKM? best=null;
+            void TryAccept(PKM native)
+            {
+                if(native.Species!=species || native.Form!=form || native.IsEgg || native.IsShiny!=shiny)return;
+                native.RefreshChecksum();
+                if(!new LegalityAnalysis(native).Valid)return;
+                var pk=native.GetType()==destination.PKMType ? native.Clone() : EntityConverter.ConvertToType(native,destination.PKMType,out _);
+                if(pk==null || pk.Species!=species || pk.Form!=form || pk.IsShiny!=shiny || pk.IsEgg)return;
+                if(!NormalizeCindy(pk,p)||!new LegalityAnalysis(pk).Valid)return;
+                if(best==null || Rank(pk)>Rank(best))best=pk;
+            }
+            int Rank(PKM pk)
+            {
+                var egg=new LegalityAnalysis(pk).EncounterOriginal.IsEgg;
+                return (Identity(pk,p)?100000000:0)+(egg?10000000:0)+Quality(pk);
+            }
+            if(source.Personal.IsPresentInGame(species,form))
+            {
+                EncounterMovesetGenerator.PriorityList = [EncounterTypeGroup.Egg, EncounterTypeGroup.Slot, EncounterTypeGroup.Static, EncounterTypeGroup.Mystery, EncounterTypeGroup.Trade];
+                var criteria=EncounterCriteria.Unrestricted with {Shiny=shiny?Shiny.Always:Shiny.Never,Form=(sbyte)form};
+                var perfect=criteria with {Nature=LivingDexRecommendedBuild.GetProfile(blank).Nature,IV_HP=31,IV_ATK=31,IV_DEF=31,IV_SPA=31,IV_SPD=31,IV_SPE=31};
+                foreach(var enc in EncounterMovesetGenerator.GenerateEncounters(blank,source,ReadOnlyMemory<ushort>.Empty,game).Where(e=>(e.Species==species || e.IsEgg) && (!shiny||e.Shiny!=Shiny.Never)).Take(16))
+                {
+                    for(int attempt=0;attempt<2;attempt++)
+                    {
+                        try
+                        {
+                            var pk=enc.ConvertToPKM(source,attempt==0?perfect:criteria);
+                            if(pk.IsShiny!=shiny || pk.IsEgg)continue;
+                            if(pk.Species!=species || pk.Form!=form)
+                            {
+                                if(!enc.IsEgg)continue;
+                                var abilityIndex=pk.AbilityNumber==4?2:pk.AbilityNumber==2?1:0;
+                                pk.Species=species;pk.Form=form;pk.CurrentLevel=100;
+                                pk.RefreshAbility(abilityIndex);pk.ClearNickname();pk.SetSuggestedMoves();
+                                pk.Heal();pk.ResetPartyStats();pk.RefreshChecksum();
+                            }
+                            TryAccept(pk);
+                            var improved=pk.Clone();
+                            improved.CurrentLevel=100;improved.SetSuggestedMoves();improved.Heal();improved.ResetPartyStats();improved.RefreshChecksum();
+                            TryAccept(improved);
+                        }
+                        catch(ArgumentException) { }
+                        catch(InvalidOperationException) { }
+                    }
+                    if(best!=null && Identity(best,p) && IVTotal(best)==186 && Preferred(best))break;
+                }
+            }
+            // Immutable distribution identities are allowed only when the actual
+            // converted entity passes PKHeX validation; never overwrite the event OT.
+            if(best==null)
+            {
+                foreach(var gift in EncounterEvent.GetAllEvents().Where(x=>x.Generation==source.Generation&&x.Species==species&&x.Form==form&&!x.IsEgg).Take(40))
+                {
+                    try{TryAccept(gift.ConvertToPKM(source));}
+                    catch(ArgumentException) {}
+                    catch(InvalidOperationException) {}
+                }
+            }
+            Write(log,root,generation,mode,key,best,best==null?"TARGET_UNRESOLVED":Identity(best,p)?"OK":"EVENT_OT_EXCEPTION");
+        }
+
         public static void Run(string root, int? generation = null, SaveFile? originalSave = null)
         {
             if (originalSave != null && originalSave.Generation != generation)
