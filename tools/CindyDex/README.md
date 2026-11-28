@@ -3,3 +3,7 @@ Runs on this PKHeX fork with the pinned develop-derived AutoMod branch. Requeste
 
 Gen7 retry: use native PK7 only; exclude Gen7b/LGPE mystery gifts from the mainline collection. Validate destination PKMType before writing. Record write failures rather than discarding subsequent modes. This branch runs Gen7 only, leaving the previous matrix run untouched.
 Upstream reference: santacrab2/PKHeX-Plugins cherrytree 75443c69, ModLogic.GetRandomEncounter and LivingDex.TryAdd.
+
+
+## GameCube
+NGC uses Japanese fullwidth Cindy, TID 08888, SID 18180, matching the original supplied GCI's IDs. Generates CK3 (Colosseum) and XK3 (XD) collections; CXD origins prioritized, other Gen3 origins allowed when legitimately transferable. Shiny locked entries are reported as nonshiny fallbacks, not forced. Local original GCI import (no source save committed): `CindyDex.Cli.exe ngc-import <original.gci> <Colosseum/AllShiny> <output-folder>`; repeat for normal, and for XD with an actual XD template. Colosseum has 90 box slots, XD 240; outputs split by capacity. Template player and party remain untouched. Verify every candidate and readback before treating as final.
