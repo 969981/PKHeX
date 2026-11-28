@@ -621,6 +621,67 @@ namespace PKHeX.Core.AutoMod
             Console.WriteLine($"Gen{generation} normal species={normal.Keys.Select(x=>x.Item1).Distinct().Count()} shiny collection species={shiny.Keys.Select(x=>x.Item1).Distinct().Count()}");
         }
 
+
+        public static void RunGen5TransferTarget(ushort species,byte form,bool shiny,GameVersion game,string root)
+        {
+            var p=Profiles.Single(x=>x.Gen==5);
+            using var scope=APILegality.EnterSettingsScope();SetupLegacy(p);
+            Directory.CreateDirectory(root);
+            using var log=new StreamWriter(Path.Combine(root,"manifest.tsv"),false,Encoding.UTF8);
+            log.AutoFlush=true;log.WriteLine(ManifestHeader);
+            var destination=Trainer(p,GameVersion.B,LanguageID.Japanese);
+            var source=Trainer(p,game,LanguageID.Japanese);
+            var mode=shiny?"AllShiny":"AllNonShiny";
+            var key=$"{species:D4}-{form:D2}";
+            var blank=source.BlankPKM;
+            blank.Species=species;blank.Form=form;blank.Gender=blank.GetSaneGender();
+            PKM? best=null;
+            void TryAccept(PKM native)
+            {
+                if(native.Species!=species || native.Form!=form || native.IsEgg || native.IsShiny!=shiny)return;
+                native.RefreshChecksum();
+                if(!new LegalityAnalysis(native).Valid)return;
+                var pk=EntityConverter.ConvertToType(native,destination.PKMType,out _);
+                if(pk==null || pk.Species!=species || pk.Form!=form || pk.IsShiny!=shiny || pk.IsEgg)return;
+                if(!NormalizeCindy(pk,p)||!new LegalityAnalysis(pk).Valid)return;
+                if(best==null || (Identity(pk,p)&&!Identity(best,p)) || (Identity(pk,p)==Identity(best,p)&&Quality(pk)>Quality(best)))best=pk;
+            }
+            if(source.Personal.IsPresentInGame(species,form))
+            {
+                var criteria=EncounterCriteria.Unrestricted with {Shiny=shiny?Shiny.Always:Shiny.Never,Form=(sbyte)form};
+                foreach(var enc in EncounterMovesetGenerator.GenerateEncounters(blank,source,ReadOnlyMemory<ushort>.Empty,game).Where(e=>e.Species==species && (!shiny||e.Shiny!=Shiny.Never)).Take(12))
+                {
+                    for(int attempt=0;attempt<2;attempt++)
+                    {
+                        try
+                        {
+                            var pk=enc.ConvertToPKM(source,criteria);
+                            if(pk.Species!=species || pk.Form!=form || pk.IsShiny!=shiny)continue;
+                            TryAccept(pk);
+                            var improved=pk.Clone();
+                            improved.CurrentLevel=100;improved.SetSuggestedMoves();improved.Heal();improved.ResetPartyStats();improved.RefreshChecksum();
+                            TryAccept(improved);
+                        }
+                        catch(ArgumentException) { }
+                        catch(InvalidOperationException) { }
+                    }
+                    if(best!=null && Identity(best,p))break;
+                }
+            }
+            // Immutable distribution identities are allowed only when the actual
+            // converted entity passes PKHeX validation; never overwrite the event OT.
+            if(best==null)
+            {
+                foreach(var gift in EncounterEvent.GetAllEvents().Where(x=>x.Generation==source.Generation&&x.Species==species&&x.Form==form&&!x.IsEgg).Take(40))
+                {
+                    try{TryAccept(gift.ConvertToPKM(source));}
+                    catch(ArgumentException) {}
+                    catch(InvalidOperationException) {}
+                }
+            }
+            Write(log,root,5,mode,key,best,best==null?"TARGET_UNRESOLVED":Identity(best,p)?"OK":"EVENT_OT_EXCEPTION");
+        }
+
         public static void Run(string root, int? generation = null, SaveFile? originalSave = null)
         {
             if (originalSave != null && originalSave.Generation != generation)

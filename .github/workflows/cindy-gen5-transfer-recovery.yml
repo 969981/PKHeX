@@ -1,0 +1,57 @@
+name: Cindy Gen5 targeted transfer source recovery
+on:
+  push:
+    branches: [fix/cindy-gen5-transfer-recovery]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recover:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 9
+      matrix:
+        include: [{"species":201,"first":0,"last":13,"shiny":false},{"species":201,"first":14,"last":27,"shiny":false},{"species":201,"first":0,"last":13,"shiny":true},{"species":201,"first":14,"last":27,"shiny":true},{"species":244,"first":0,"last":0,"shiny":false},{"species":251,"first":0,"last":0,"shiny":false},{"species":493,"first":0,"last":0,"shiny":false},{"species":132,"first":0,"last":0,"shiny":true},{"species":251,"first":0,"last":0,"shiny":true},{"species":268,"first":0,"last":0,"shiny":true},{"species":385,"first":0,"last":0,"shiny":true},{"species":416,"first":0,"last":0,"shiny":true},{"species":493,"first":0,"last":0,"shiny":true},{"species":494,"first":0,"last":0,"shiny":true},{"species":643,"first":0,"last":0,"shiny":true},{"species":644,"first":0,"last":0,"shiny":true},{"species":647,"first":0,"last":0,"shiny":true},{"species":648,"first":0,"last":0,"shiny":true}]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: 969981/PKHeX-Plugins_CHS
+          ref: e2cbf30d025419b384d6453aa294944553b34346
+          path: PKHeX-Plugins/PKHeX-Plugins_CHS
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.103'
+      - name: Prepare and build
+        shell: pwsh
+        run: |
+          ./tools/CindyDex/prepare.ps1
+          dotnet build PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release
+          exit $LASTEXITCODE
+      - name: Try alternate native sources in isolated processes
+        shell: pwsh
+        run: |
+          $dll = (Get-ChildItem 'PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli/bin/Release' -Recurse -Filter CindyDex.Cli.dll | Select-Object -First 1).FullName
+          if (!$dll) { throw 'CLI missing' }
+          $games = if (${{ matrix.species }} -eq 201) { @('HG','SS','D','P','Pt') } else { @('B','W','B2','W2','HG','SS','Pt','E') }
+          foreach($form in ${{ matrix.first }}..${{ matrix.last }}) {
+            foreach($game in $games) {
+              $dest="output/form-$form/$game"
+              New-Item -ItemType Directory -Force $dest | Out-Null
+              $args=@('"' + $dll + '"','gen5-transfer-target','${{ matrix.species }}',$form,'${{ matrix.shiny }}',$game,$dest)
+              $proc=Start-Process dotnet -ArgumentList $args -PassThru -NoNewWindow -RedirectStandardOutput "$dest/stdout.log" -RedirectStandardError "$dest/stderr.log"
+              if(!$proc.WaitForExit(30000)) { & taskkill /PID $proc.Id /T /F | Out-Null; Write-Host "Timeout $form $game"; continue }
+              if(Get-ChildItem $dest -Recurse -Filter '*.pk5' | Select-Object -First 1) {
+                Write-Host "Accepted $form $game"
+                break
+              }
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cindy-Gen5-transfer-${{ matrix.species }}-${{ matrix.first }}-${{ matrix.shiny }}
+          path: output/
+          if-no-files-found: warn

@@ -8,6 +8,10 @@ if (args.Length==4 && args[0]=="incremental" && int.TryParse(args[1],out int g))
     CindyDexExporter.RunIncremental(args[2],args[3],g);
     return 0;
 }
+if(args.Length==6 && args[0]=="gen5-transfer-target")
+{
+    CindyDexExporter.RunGen5TransferTarget(ushort.Parse(args[1]),byte.Parse(args[2]),bool.Parse(args[3]),Enum.Parse<GameVersion>(args[4]),args[5]);return 0;
+}
 if(args.Length==6 && args[0]=="legacy-shard")
 {
     CindyDexExporter.RunLegacyShard(int.Parse(args[1]),int.Parse(args[2]),int.Parse(args[3]),bool.Parse(args[4]),args[5]);return 0;
