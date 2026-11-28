@@ -1,0 +1,35 @@
+name: Gen7 event archive repair
+on:
+  push:
+    branches: [feat/gen7-event-archive-repair]
+    paths:
+      - 'tools/Gen7EventRepair/**'
+      - '.github/workflows/gen7-event-archive-repair.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build and synthetic save roundtrip
+        run: dotnet run --project tools/Gen7EventRepair/Gen7EventRepair.csproj -c Release -- --smoke
+      - name: Publish portable runner
+        run: dotnet publish tools/Gen7EventRepair/Gen7EventRepair.csproj -c Release -r ${{ matrix.rid }} --self-contained true -o publish
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Gen7EventRepair-${{ matrix.rid }}
+          path: publish
+          retention-days: 7
