@@ -75,7 +75,7 @@ $fast = @'
             };
             PKM? candidate = AddPKM(sav,tr,species,form,relaxed,customBuild,trainerOverride:tr);
             if (!IsAcceptedLivingDexResult(candidate,species,form,true,requireShiny) ||
-                (!cfg.SetShiny && candidate?.IsShiny==true))
+                (cfg.SetShiny != true && candidate?.IsShiny==true))
             {
                 failureReason = LivingDexFailureReason.NoEncounter;
                 failureReport = "Initial egg-first bounded encounter pass did not return a matching legal individual.";
