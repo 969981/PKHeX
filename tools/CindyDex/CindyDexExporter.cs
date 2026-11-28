@@ -191,7 +191,9 @@ namespace PKHeX.Core.AutoMod
                     if (pk.Species != expected.Species || pk.Form != expected.Form || pk.PID != expected.PID ||
                         pk.ID32 != expected.ID32 || pk.OriginalTrainerName != expected.OriginalTrainerName ||
                         pk.IsShiny != expected.IsShiny || pk.Nature != expected.Nature ||
-                        !pk.IVs.SequenceEqual(expected.IVs) || !pk.ChecksumValid || !new LegalityAnalysis(pk).Valid)
+                        pk.IV_HP != expected.IV_HP || pk.IV_ATK != expected.IV_ATK ||
+                        pk.IV_DEF != expected.IV_DEF || pk.IV_SPA != expected.IV_SPA ||
+                        pk.IV_SPD != expected.IV_SPD || pk.IV_SPE != expected.IV_SPE || !pk.ChecksumValid || !new LegalityAnalysis(pk).Valid)
                         {
                         log.WriteLine($"{template.Generation}\tSave-{mode}\t{template.Version}-Part{part + 1:D2}\tERROR:Save entity readback failed slot {i + 1}");
                         log.Flush();
