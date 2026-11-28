@@ -1,0 +1,115 @@
+name: Cindy Bank export converter
+on:
+  push:
+    branches: [ci/cindy-bank-export-tool]
+    paths: [.github/workflows/cindy-bank-export-tool.yml]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Create converter
+        shell: bash
+        run: |
+          mkdir -p CindyBankExportTemp
+          cat > CindyBankExportTemp/CindyBankExport.csproj <<'EOF'
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup><ItemGroup><ProjectReference Include="../PKHeX.Core/PKHeX.Core.csproj" /></ItemGroup></Project>
+          EOF
+          cat > CindyBankExportTemp/Program.cs <<'EOF'
+          using System;
+          using System.IO;
+          using System.Linq;
+          using System.Collections.Generic;
+          using PKHeX.Core;
+          
+          if (args.Length != 2) throw new ArgumentException("Usage: CindyBankExport <input directory> <output directory>");
+          string root=Path.GetFullPath(args[0]), output=Path.GetFullPath(args[1]);
+          Directory.CreateDirectory(output);
+          byte[] template=File.ReadAllBytes(Path.Combine(root,"template.bin"));
+          if(template.Length!=0xACA48 || BitConverter.ToUInt16(template,0x15C)!=2 || BitConverter.ToUInt16(template,0x15E)!=100) throw new InvalidDataException("Not a compact Gen7 Bank v2 template");
+          byte[] blank=new byte[232]; var empty=new PK7(); empty.RefreshChecksum(); empty.WriteEncryptedDataStored(blank);
+          int Offset(int index)=>0x17C+index/30*0x1B56+index%30*232;
+          var inputs=new List<Entry>(); var errors=new List<string>{"rank\tgroup\tpath\tindex\tspecies\tform\tstage\terror"};
+          string clean(string s)=>s.Replace('\t',' ').Replace('\r',' ').Replace('\n',' ');
+          void Error(int rank,string group,string path,int index,PKM? pk,string stage,string why)=>errors.Add($"{rank}\t{group}\t{path}\t{index}\t{pk?.Species}\t{pk?.Form}\t{stage}\t{clean(why)}");
+          foreach(string line in File.ReadLines(Path.Combine(root,"source.tsv")).Skip(1)){
+           var f=line.Split('\t'); int rank=int.Parse(f[0]); string group=f[1], rel=f[2]; string path=Path.Combine(root,rel);
+           try {
+            var b=File.ReadAllBytes(path);
+            if(f[3]=="sav"){
+             var sav=SaveUtil.GetSaveFile(b,path)??throw new InvalidDataException("Save parser rejected source");
+             int count=0;
+             for(int i=0;i<sav.BoxData.Count;i++){var p=sav.BoxData[i]; if(p.Species==0)continue; inputs.Add(new(rank,group,rel,i,p));count++;}
+             Console.WriteLine($"{rel}: {count} occupied slots");
+             if(f.Length>4 && int.TryParse(f[4],out int expected)&&count!=expected)throw new InvalidDataException($"Expected {expected} slots, read {count}");
+            }else{
+             PKM p=f[3] switch{"pk3"=>new PK3(b),"pk4"=>new PK4(b),"pk5"=>new PK5(b),"pk6"=>new PK6(b),"pk7"=>new PK7(b),"ck3"=>new CK3(b),"xk3"=>new XK3(b),_=>throw new InvalidDataException(f[3])};
+             inputs.Add(new(rank,group,rel,0,p));
+            }
+           }catch(Exception ex){Error(rank,group,rel,0,null,"parse",ex.Message);}
+          }
+          var converted=new List<Converted>();
+          foreach(var e in inputs){
+           try{
+            var p=e.Pokemon;
+            if(p.Species==0 || (p.Format>=3 && !p.ChecksumValid))throw new InvalidDataException("Empty or checksum-invalid source");
+            bool before=p.IsShiny;
+            var q=EntityConverter.ConvertToType(p,typeof(PK7),out var reason) as PK7;
+            if(q is null)throw new InvalidDataException("No native conversion: "+reason);
+            if(q.Species!=p.Species || q.IsShiny!=before)throw new InvalidDataException("Species or shiny changed during conversion");
+            q.HeldItem=0; q.RefreshChecksum();
+            byte[] bytes=new byte[232];q.WriteEncryptedDataStored(bytes);
+            var read=new PK7(bytes.ToArray());
+            if(!read.ChecksumValid||read.Species!=q.Species||read.Form!=q.Form||read.IsShiny!=q.IsShiny||read.ID32!=q.ID32)throw new InvalidDataException("PK7 slot roundtrip failed");
+            bool valid=false;string legality="";
+            try{valid=new LegalityAnalysis(q).Valid;}catch(Exception ex){legality=clean(ex.Message);}
+            converted.Add(new(e,q,bytes,valid,legality,reason.ToString()));
+           }catch(Exception ex){Error(e.Rank,e.Group,e.Path,e.Index,e.Pokemon,"conversion",ex.Message);}
+          }
+          var audit=new List<string>{"set\tfile\tbox\tslot\trank\trequested_group\tsource\tsource_slot\tspecies\tform_before\tform_after\tgender\tshiny\tot\ttid16\tsid16\tlegal\tlegality_error\tconversion"};
+          void Pack(string name,IEnumerable<Converted> entries){
+           var dir=Path.Combine(output,name);Directory.CreateDirectory(dir);
+           foreach(bool shiny in new[]{true,false}){
+            var list=entries.Where(e=>e.Pokemon.IsShiny==shiny).OrderBy(e=>e.Source.Rank).ThenBy(e=>e.Pokemon.Species).ThenBy(e=>e.Pokemon.Form).ThenBy(e=>e.Pokemon.Gender).ThenBy(e=>e.Source.Path,StringComparer.Ordinal).ThenBy(e=>e.Source.Index).ToArray();
+            for(int start=0;start<list.Length;start+=3000){
+             var data=template.ToArray();
+             for(int i=0;i<3000;i++)blank.CopyTo(data,Offset(i));
+             for(int i=0;i<30;i++)blank.CopyTo(data,0xAAF14+i*232);
+             Array.Clear(data,0xACA44,4);
+             int n=Math.Min(3000,list.Length-start);
+             string file=$"{(shiny?"Shiny":"NonShiny")}_Part{start/3000+1:00}_bulk_import.bin";
+             for(int i=0;i<n;i++){
+              var e=list[start+i];e.Bytes.CopyTo(data,Offset(i));var q=e.Pokemon;
+              audit.Add($"{name}\t{file}\t{i/30+1}\t{i%30+1}\t{e.Source.Rank}\t{e.Source.Group}\t{e.Source.Path}\t{e.Source.Index}\t{q.Species}\t{e.Source.Pokemon.Form}\t{q.Form}\t{q.Gender}\t{q.IsShiny}\t{clean(q.OriginalTrainerName)}\t{q.TID16}\t{q.SID16}\t{e.Valid}\t{e.LegalityError}\t{e.Reason}");
+             }
+             for(int i=0;i<3000;i++){
+              var q=new PK7(data.AsSpan(Offset(i),232).ToArray());
+              if(i<n){var ex=list[start+i].Pokemon;if(!q.ChecksumValid||q.Species!=ex.Species||q.Form!=ex.Form||q.ID32!=ex.ID32||q.IsShiny!=shiny)throw new InvalidDataException("Bank readback failed "+file+" "+i);}
+              else if(q.Species!=0)throw new InvalidDataException("Uncleared bank slot "+i);
+             }
+             File.WriteAllBytes(Path.Combine(dir,file),data);
+             Console.WriteLine($"{name}/{file}: {n}");
+            }
+           }
+          }
+          Pack("Candidates",converted);
+          Pack("PKHeX-valid-only",converted.Where(x=>x.Valid));
+          File.WriteAllLines(Path.Combine(output,"slots.tsv"),audit);
+          File.WriteAllLines(Path.Combine(output,"rejected.tsv"),errors);
+          File.WriteAllText(Path.Combine(output,"summary.txt"),$"Read={inputs.Count}\nConverted={converted.Count}\nPKHeXValid={converted.Count(x=>x.Valid)}\nActualShiny={converted.Count(x=>x.Pokemon.IsShiny)}\nActualNonShiny={converted.Count(x=>!x.Pokemon.IsShiny)}\nErrors={errors.Count-1}\n");
+          Console.WriteLine(File.ReadAllText(Path.Combine(output,"summary.txt")));
+          record Entry(int Rank,string Group,string Path,int Index,PKM Pokemon);
+          record Converted(Entry Source,PK7 Pokemon,byte[] Bytes,bool Valid,string LegalityError,string Reason);
+          
+          EOF
+      - name: Publish Linux x64
+        run: dotnet publish CindyBankExportTemp/CindyBankExport.csproj -c Release -r linux-x64 --self-contained true -o published
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cindy-bank-export-linux-x64
+          path: |
+            published/
+            CindyBankExportTemp/
