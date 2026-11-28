@@ -1,0 +1,77 @@
+name: Cindy Gen3-7 save generation
+on:
+  push:
+    branches: [feat/cindy-dex-saves]
+  pull_request:
+    branches: [master]
+    paths: ['tools/CindyDex/**', '.github/workflows/cindy-saves.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cindy-saves-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  generate:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        gen: [3,4,5,6,7]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: 969981/PKHeX-Plugins_CHS
+          ref: e2cbf30d025419b384d6453aa294944553b34346
+          path: PKHeX-Plugins/PKHeX-Plugins_CHS
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.103'
+      - name: Prepare collection-specific 6V policy
+        shell: pwsh
+        run: ./tools/CindyDex/prepare.ps1
+      - name: Build generator against repository Core
+        shell: pwsh
+        run: |
+          dotnet build PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release 2>&1 | Tee-Object -FilePath build.log
+          exit $LASTEXITCODE
+      - name: Generate PKM and save candidates
+        shell: pwsh
+        run: |
+          dotnet run --no-build --project PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release -- ${{ matrix.gen }} output 2>&1 | Tee-Object -FilePath generate.log
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cindy-Gen${{ matrix.gen }}-saves-and-PKM
+          path: output/
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cindy-Gen${{ matrix.gen }}-diagnostics
+          path: |
+            build.log
+            generate.log
+          if-no-files-found: warn
+      - name: Validate coverage and report exceptions
+        shell: python
+        run: |
+          import csv, pathlib
+          p=pathlib.Path('output/manifest.tsv')
+          rows=list(csv.DictReader(p.open(encoding='utf-8-sig'),delimiter='\t'))
+          maximum={3:386,4:493,5:649,6:720,7:807}[${{ matrix.gen }}]
+          errors=[r for r in rows if r['Status'].startswith(('ERROR:','MISSING:'))]
+          for mode in ['AllNonShiny','AllShiny']:
+              data=[r for r in rows if r['Mode']==mode and r.get('OT')]
+              missing=sorted(set(range(1,maximum+1))-{int(r['Key'].split('-')[0]) for r in data})
+              print(mode,'entries',len(data),'missing',missing,'6V',sum(r['IVTotal']=='186' for r in data),'preferred nature',sum(r['PreferredNature']=='True' for r in data),'exceptions',sum(r['Status']!='OK' for r in data))
+              if missing or not any(r['Mode']=='Save-'+mode and r['Status'].startswith('SAVE_VERIFIED:') for r in rows): errors.append(mode)
+          print('unresolved',len(errors))
+          if errors: raise SystemExit('Incomplete candidate: see manifest; not a final verified collection')
