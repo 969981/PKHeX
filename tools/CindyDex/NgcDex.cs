@@ -72,7 +72,7 @@ internal static class NgcDex
                         if(enc is IFixedGender fg && fg.IsFixedGender && fg.Gender!=gender) continue;
                         eligible=true;
                         var blank=trainer.BlankPKM;blank.Species=enc.Species;blank.Form=enc.Form;
-                        var nature=LivingDexRecommendedBuild.GetProfile(blank).Nature;
+                        var nature=CindyDexExporter.GetNgcRecommendedNature(blank);
                         var basic=EncounterCriteria.Unrestricted with {Gender=(Gender)gender,Shiny=shiny?Shiny.Always:Shiny.Never};
                         var perfect=basic with {Nature=nature,IV_HP=31,IV_ATK=31,IV_DEF=31,IV_SPA=31,IV_SPD=31,IV_SPE=31};
                         for(int attempt=0;attempt<5;attempt++)
