@@ -35,9 +35,75 @@ namespace PKHeX.Core.AutoMod
             return save;
         }
 
-        private static bool Identity(PKM pk, Profile p) =>
-            pk.OriginalTrainerName == (pk.Language is (int)LanguageID.Japanese or (int)LanguageID.ChineseS or (int)LanguageID.ChineseT ? "Ｃｉｎｄｙ" : "Cindy") &&
-            (p.Gen == 7 ? pk.ID32 % 1000000 == p.DisplayId : pk.TID16 == p.DisplayId);
+        private static string CindyName(int language) => language is (int)LanguageID.Japanese or (int)LanguageID.ChineseS or (int)LanguageID.ChineseT ? "Ｃｉｎｄｙ" : "Cindy";
+
+        private static bool HasId(PKM pk, Profile p) => p.Gen == 7 ? pk.ID32 % 1000000 == p.DisplayId : pk.TID16 == p.DisplayId;
+        private static bool IsCindy(string name) => name.Normalize(NormalizationForm.FormKC) == "Cindy";
+        private static bool Identity(PKM pk, Profile p) => pk.OriginalTrainerName == CindyName(pk.Language) && HasId(pk,p);
+        private static bool NormalizeCindy(PKM pk, Profile p)
+        {
+            if (!IsCindy(pk.OriginalTrainerName))
+                return FixedEvent(pk) && new LegalityAnalysis(pk).Valid;
+            if (!HasId(pk,p))
+                return false;
+            pk.OriginalTrainerName = CindyName(pk.Language);
+            pk.RefreshChecksum();
+            return Identity(pk,p) && new LegalityAnalysis(pk).Valid;
+        }
+
+        // Separate item-free, statically transfer-compatible collection.
+        // Never alter the encounter to disguise a blocked form or manufacture a HOME tracker.
+        private static string? HomeBlock(PKM pk)
+        {
+            if (pk.IsEgg) return "EGG";
+            if (pk.Context == EntityContext.Gen7b) return "LGPE_FORMAT";
+            if (pk.Species == 172 && pk.Form != 0) return "SPIKY_EARED_PICHU";
+            if (pk.Species == 25 && pk.Form != 0 && pk.Generation == 6) return "COSPLAY_PIKACHU";
+            if (FormInfo.IsFusedForm(pk.Species,pk.Form,pk.Format)) return "FUSED_FORM";
+            if (FormInfo.IsBattleOnlyForm(pk.Species,pk.Form,pk.Format)) return "BATTLE_ONLY_FORM";
+            if (pk.Format == 7 && FormInfo.IsTotemForm(pk.Species,pk.Form))
+            {
+                if (pk.Species is 105 or 743 or 752 or 777) return "BANK_BLOCKED_TOTEM";
+                return "TOTEM_REVERTS_ON_HOME_TRANSFER";
+            }
+            if (pk.Species == 676 && pk.Form != 0) return "TRIM_REVERTS";
+            return null;
+        }
+
+        private static List<PKM> HomeCollection(Profile p, string root, string mode, List<PKM> source, StreamWriter log)
+        {
+            var unique = new Dictionary<(ushort,byte),PKM>();
+            foreach (var original in source)
+            {
+                var key = $"{original.Species:D4}-{original.Form:D2}";
+                var blocked = HomeBlock(original);
+                if (blocked != null)
+                {
+                    log.WriteLine($"{p.Gen}\t{mode}-Audit\t{key}\tEXCLUDED:{blocked}");
+                    continue;
+                }
+                var pk = original.Clone();
+                pk.HeldItem = 0;
+                if (FormItem.TryGetForm(pk.Species,0,pk.Format,out var expected)) pk.Form=expected;
+                if (pk.Species == 487) pk.Form=0; // Griseous Orb / Giratina
+                pk.ResetPartyStats();
+                pk.RefreshChecksum();
+                if (!NormalizeCindy(pk,p) || pk.HeldItem != 0 || !new LegalityAnalysis(pk).Valid)
+                {
+                    log.WriteLine($"{p.Gen}\t{mode}-Audit\t{key}\tEXCLUDED:POST_ITEM_LEGALITY");
+                    continue;
+                }
+                var k=(pk.Species,pk.Form);
+                if (!unique.TryGetValue(k,out var prev) ||
+                    (mode=="HOME-Shiny" && pk.IsShiny && !prev.IsShiny) ||
+                    (pk.IsShiny==prev.IsShiny && Quality(pk)>Quality(prev)))
+                    unique[k]=pk;
+                if (original.Form!=pk.Form) log.WriteLine($"{p.Gen}\t{mode}-Audit\t{key}\tNORMALIZED_FORM:{pk.Form}");
+            }
+            foreach(var pk in unique.Values.OrderBy(x=>x.Species).ThenBy(x=>x.Form))
+                Write(log,root,p.Gen,mode,$"{pk.Species:D4}-{pk.Form:D2}",pk,Identity(pk,p)?"HOME_STATIC_OK":"EVENT_OT_EXCEPTION");
+            return unique.Values.OrderBy(x=>x.Species).ThenBy(x=>x.Form).ToList();
+        }
 
         private static int IVTotal(PKM p) => p.IV_HP + p.IV_ATK + p.IV_DEF + p.IV_SPA + p.IV_SPD + p.IV_SPE;
 
@@ -54,6 +120,7 @@ namespace PKHeX.Core.AutoMod
 
         private static Dictionary<(ushort, byte), PKM> Generate(Profile p, SaveFile save, bool shiny, string root, StreamWriter log)
         {
+            Directory.CreateDirectory(root);
             var result = new Dictionary<(ushort, byte), PKM>();
             // Use the current develop Living Dex core, including its native RNG, form and shiny-lock handling.
             var cfg = new LivingDexConfig
@@ -70,7 +137,7 @@ namespace PKHeX.Core.AutoMod
                     return;
                 if (pk.GetType() != save.PKMType)
                     return;
-                if (!Identity(pk, p) && !FixedEvent(pk))
+                if (!NormalizeCindy(pk,p))
                     return;
                 var key = (pk.Species, pk.Form);
                 if (!result.TryGetValue(key, out var prev) ||
@@ -97,7 +164,7 @@ namespace PKHeX.Core.AutoMod
             var dir = Path.Combine(root, $"Gen{gen}", mode);
             Directory.CreateDirectory(dir);
             File.WriteAllBytes(Path.Combine(dir, $"{key}.pk{pk.Format}"), PartyBytes(pk));
-            log.WriteLine($"{gen}\t{mode}\t{key}\t{status}\t{pk.Version}\t{pk.Generation}\t{pk.OriginalTrainerName}\t{pk.TID16}\t{pk.ID32}\t{pk.IsShiny}\t{IVTotal(pk)}\t{pk.Language}\t{pk.Nature}\t{pk.IV_HP}\t{pk.IV_ATK}\t{pk.IV_DEF}\t{pk.IV_SPA}\t{pk.IV_SPD}\t{pk.IV_SPE}\t{Preferred(pk)}");
+            log.WriteLine($"{gen}\t{mode}\t{key}\t{status}\t{pk.Version}\t{pk.Generation}\t{pk.OriginalTrainerName}\t{pk.TID16}\t{pk.ID32}\t{pk.IsShiny}\t{IVTotal(pk)}\t{pk.Language}\t{pk.Nature}\t{pk.IV_HP}\t{pk.IV_ATK}\t{pk.IV_DEF}\t{pk.IV_SPA}\t{pk.IV_SPD}\t{pk.IV_SPE}\t{Preferred(pk)}\t{pk.HeldItem}\t{pk.EV_HP}\t{pk.EV_ATK}\t{pk.EV_DEF}\t{pk.EV_SPA}\t{pk.EV_SPD}\t{pk.EV_SPE}\t{pk.Move1}\t{pk.Move2}\t{pk.Move3}\t{pk.Move4}");
             log.Flush();
         }
 
@@ -133,6 +200,7 @@ namespace PKHeX.Core.AutoMod
                             if (la.EncounterMatch is not MysteryGift matched ||
                                 matched.CardID != gift.CardID || matched.GetType() != gift.GetType())
                                 continue;
+                            if (!NormalizeCindy(pk,p)) continue;
                             if (best is null || (pk.IsShiny && !best.IsShiny))
                                 best = pk;
                             if (best.IsShiny)
@@ -207,7 +275,9 @@ namespace PKHeX.Core.AutoMod
                     var expected = chunk[i];
                     if (pk.Species != expected.Species || pk.Form != expected.Form || pk.PID != expected.PID ||
                         pk.ID32 != expected.ID32 || pk.OriginalTrainerName != expected.OriginalTrainerName ||
-                        pk.IsShiny != expected.IsShiny || pk.Nature != expected.Nature ||
+                        pk.IsShiny != expected.IsShiny || pk.Nature != expected.Nature || pk.Language != expected.Language ||
+                        pk.HeldItem != expected.HeldItem || pk.Move1 != expected.Move1 || pk.Move2 != expected.Move2 || pk.Move3 != expected.Move3 || pk.Move4 != expected.Move4 ||
+                        pk.EV_HP != expected.EV_HP || pk.EV_ATK != expected.EV_ATK || pk.EV_DEF != expected.EV_DEF || pk.EV_SPA != expected.EV_SPA || pk.EV_SPD != expected.EV_SPD || pk.EV_SPE != expected.EV_SPE ||
                         pk.IV_HP != expected.IV_HP || pk.IV_ATK != expected.IV_ATK ||
                         pk.IV_DEF != expected.IV_DEF || pk.IV_SPA != expected.IV_SPA ||
                         pk.IV_SPD != expected.IV_SPD || pk.IV_SPE != expected.IV_SPE || !pk.ChecksumValid || !new LegalityAnalysis(pk).Valid)
@@ -247,7 +317,7 @@ namespace PKHeX.Core.AutoMod
                 throw new ArgumentException("Template generation does not match requested generation.");
             Directory.CreateDirectory(root);
             using var log = new StreamWriter(Path.Combine(root, "manifest.tsv"), false, Encoding.UTF8);
-            log.WriteLine("Gen\tMode\tKey\tStatus\tOriginVersion\tOriginGen\tOT\tTID16\tID32\tShiny\tIVTotal\tLanguage\tNature\tHP_IV\tATK_IV\tDEF_IV\tSPA_IV\tSPD_IV\tSPE_IV\tPreferredNature");
+            log.WriteLine("Gen\tMode\tKey\tStatus\tOriginVersion\tOriginGen\tOT\tTID16\tID32\tShiny\tIVTotal\tLanguage\tNature\tHP_IV\tATK_IV\tDEF_IV\tSPA_IV\tSPD_IV\tSPE_IV\tPreferredNature\tHeldItem\tEV_HP\tEV_ATK\tEV_DEF\tEV_SPA\tEV_SPD\tEV_SPE\tMove1\tMove2\tMove3\tMove4");
             using var scope = APILegality.EnterSettingsScope();
             var easter = Legalizer.EnableEasterEggs;
             try
@@ -269,6 +339,20 @@ namespace PKHeX.Core.AutoMod
                     var events = Events(p, root, log);
                     var normals = Generate(p, save, false, root, log);
                     var shinies = Generate(p, save, true, root, log);
+                    if (p.Gen==7)
+                    {
+                        // Pre-Gen7 origins cannot be Chinese; use a Japanese trainer for missing forms (notably Unown).
+                        var japanese=Trainer(p,carrier,LanguageID.Japanese);
+                        foreach (var (target,shiny) in new[] {(normals,false),(shinies,true)})
+                        {
+                            if (target.Keys.Count(k=>k.Item1==201)==28 && target.Keys.Select(k=>k.Item1).Distinct().Count()>=p.Max) continue;
+                            foreach (var (key,pk) in Generate(p,japanese,shiny,Path.Combine(root,"JapaneseFallback"),log))
+                            {
+                                if (!target.TryGetValue(key,out var prev) || (pk.IsShiny==shiny && prev.IsShiny!=shiny))
+                                    target[key]=pk;
+                            }
+                        }
+                    }
                     var collections = new Dictionary<string, List<PKM>>
                     {
                         ["Mixed"] = new(), ["AllShiny"] = new(), ["AllNonShiny"] = new(), ["Events"] = events
@@ -299,6 +383,8 @@ namespace PKHeX.Core.AutoMod
                             log.Flush();
                         }
                     }
+                    collections["HOME-NonShiny"] = HomeCollection(p,root,"HOME-NonShiny",collections["AllNonShiny"],log);
+                    collections["HOME-Shiny"] = HomeCollection(p,root,"HOME-Shiny",collections["AllShiny"],log);
                     foreach (var (mode, entries) in collections.Where(x => x.Key != "Mixed"))
                     {
                         var primary = originalSave ?? Trainer(p, p.Games[0], lang);
