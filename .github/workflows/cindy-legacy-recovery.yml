@@ -1,0 +1,90 @@
+name: Cindy Gen3-5 targeted native egg recovery
+on:
+  push:
+    branches: [fix/cindy-legacy-target-recovery]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 46118875360
+          github-token: ${{ github.token }}
+          pattern: Cindy-Gen[345]-shard-*
+          path: baseline
+      - id: targets
+        shell: python
+        run: |
+          import csv,json,pathlib,os
+          matrix=[]
+          for gen,maxid in [(3,386),(4,493),(5,649)]:
+              for shiny,mode in [(False,'AllNonShiny'),(True,'AllShiny')]:
+                  seen=set()
+                  failed=set()
+                  for folder in pathlib.Path('baseline').glob('Cindy-Gen'+str(gen)+'-shard-*-'+str(shiny).lower()):
+                      for manifest in folder.rglob('manifest.tsv'):
+                          for row in csv.DictReader(manifest.open(encoding='utf-8-sig'),delimiter='\t'):
+                              if row['Mode']==mode and row.get('OT') and (row['Shiny']=='True')==shiny:
+                                  seen.add(int(row['Key'].split('-')[0]))
+                      for diag in folder.rglob('diagnostics.json'):
+                          for t in json.loads(diag.read_text(encoding='utf-8-sig')).get('FailedTargets',[]):
+                              failed.add(t['Species'])
+                  missing=sorted((set(range(1,maxid+1))-seen)|failed)
+                  print(gen,mode,'missing species or forms',len(missing),flush=True)
+                  for n in range(0,len(missing),32):
+                      matrix.append(dict(gen=gen,shiny=shiny,part=n//32+1,targets=','.join(map(str,missing[n:n+32]))))
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('matrix='+json.dumps({'include':matrix},separators=(',',':'))+'\n')
+  recover:
+    needs: plan
+    runs-on: windows-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: 969981/PKHeX-Plugins_CHS
+          ref: e2cbf30d025419b384d6453aa294944553b34346
+          path: PKHeX-Plugins/PKHeX-Plugins_CHS
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.103'
+      - name: Prepare and build native egg recovery
+        shell: pwsh
+        run: |
+          ./tools/CindyDex/prepare.ps1
+          dotnet build PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release
+          exit $LASTEXITCODE
+      - name: Recover only missing targets with isolated hard timeout
+        shell: pwsh
+        run: |
+          $dll = (Get-ChildItem 'PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli/bin/Release' -Recurse -Filter CindyDex.Cli.dll | Select-Object -First 1).FullName
+          if (!$dll) { throw 'CLI not found' }
+          New-Item -ItemType Directory -Force output | Out-Null
+          foreach ($id in '${{ matrix.targets }}'.Split(',')) {
+            $dest = "output/species-$id"
+            New-Item -ItemType Directory -Force $dest | Out-Null
+            $args = @('"' + $dll + '"','legacy-shard','${{ matrix.gen }}',$id,$id,'${{ matrix.shiny }}',$dest)
+            $proc = Start-Process dotnet -ArgumentList $args -PassThru -NoNewWindow -RedirectStandardOutput "$dest/stdout.log" -RedirectStandardError "$dest/stderr.log"
+            if (!$proc.WaitForExit(45000)) {
+              & taskkill /PID $proc.Id /T /F | Out-Null
+              "TIMEOUT $id" | Tee-Object -FilePath output/recovery.log -Append
+            } else {
+              "$id exit=$($proc.ExitCode)" | Tee-Object -FilePath output/recovery.log -Append
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cindy-Gen${{ matrix.gen }}-recovery-${{ matrix.shiny }}-${{ matrix.part }}
+          path: output/
+          if-no-files-found: warn

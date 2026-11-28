@@ -612,6 +612,7 @@ namespace PKHeX.Core.AutoMod
             }
             collections["HOME-NonShiny"]=HomeCollection(p,root,"HOME-NonShiny",collections["AllNonShiny"],log);
             collections["HOME-Shiny"]=HomeCollection(p,root,"HOME-Shiny",collections["AllShiny"],log);
+            if(Environment.GetEnvironmentVariable("CINDY_ENTITIES_ONLY")!="1")
             foreach(var (mode,entries) in collections)
             {
                 ExportSaveCopies(root,Trainer(p,p.Games[0],LanguageID.Japanese),mode,entries,log);

@@ -104,3 +104,51 @@ $fast = @'
 '@
 $s = $s.Replace($anchor, $fast + $anchor)
 Set-Content $p $s -Encoding utf8
+
+# Recovery uses PKHeX's native egg encounter constructor before the general ALM search.
+$p = "$plugin/PKHeX.Core.AutoMod/Enhancements/ModLogic.cs"
+$s = Get-Content $p -Raw
+$anchor = 'PKM? candidate = AddPKM(sav,tr,species,form,relaxed,customBuild,trainerOverride:tr);'
+if (-not $s.Contains($anchor)) { throw 'Fast candidate anchor missing' }
+$s = $s.Replace($anchor, 'PKM? candidate = TryCindyNativeEgg(sav,tr,species,form,requireShiny) ?? AddPKM(sav,tr,species,form,relaxed,customBuild,trainerOverride:tr);')
+$anchor = '    private static bool IsAcceptedLivingDexResult('
+if (-not $s.Contains($anchor)) { throw 'Native egg helper anchor missing' }
+$helper = @'
+    private static PKM? TryCindyNativeEgg(ITrainerInfo sav,ITrainerInfo tr,ushort species,byte form,bool shiny)
+    {
+        var blank=GetLivingDexBlank(sav);
+        blank.Species=species; blank.Form=form; blank.Gender=blank.GetSaneGender();
+        var profile=LivingDexRecommendedBuild.GetProfile(blank);
+        var criteria=EncounterCriteria.Unrestricted with
+        {
+            Nature=profile.Nature, Shiny=shiny?Shiny.Always:Shiny.Never,
+            IV_HP=31, IV_ATK=31, IV_DEF=31, IV_SPA=31, IV_SPD=31, IV_SPE=31,
+        };
+        var item=GetFormSpecificItem(sav.Version,sav.Generation,species,form);
+        foreach(var enc in EncounterMovesetGenerator.GenerateEncounters(blank,tr,ReadOnlyMemory<ushort>.Empty,sav.Version).Where(e=>e.IsEgg && e.Generation==sav.Generation).Take(4))
+        {
+            for(int attempt=0;attempt<4;attempt++)
+            {
+                try
+                {
+                    var pk=enc.ConvertToPKM(tr,criteria);
+                    if(pk.GetType()!=blank.GetType() || pk.IsEgg || pk.IsShiny!=shiny)continue;
+                    var abilityIndex=pk.AbilityNumber==4?2:pk.AbilityNumber==2?1:0;
+                    pk.Species=species;pk.Form=form;pk.CurrentLevel=100;
+                    pk.RefreshAbility(abilityIndex);pk.ClearNickname();
+                    if(item is not null) pk.HeldItem=item.Value;
+                    pk.SetSuggestedMoves();pk.Heal();pk.ResetPartyStats();pk.RefreshChecksum();
+                    if(IsAcceptedLivingDexResult(pk,species,form,true,shiny) &&
+                       pk.IsShiny==shiny && new LegalityAnalysis(pk).EncounterOriginal.IsEgg)
+                        return pk;
+                }
+                catch(ArgumentException) { }
+                catch(InvalidOperationException) { }
+            }
+        }
+        return null;
+    }
+
+'@
+$s = $s.Replace($anchor,$helper+$anchor)
+Set-Content $p $s -Encoding utf8
