@@ -1,7 +1,7 @@
-name: Cindy Gen6-7 targeted V3 repair
+name: Cindy Gen6 targeted V4 repair
 on:
   push:
-    branches: [fix/cindy-v2-incremental]
+    branches: [fix/cindy-v4-trainer]
   pull_request:
     branches: [master]
     paths: ['tools/CindyDex/**', '.github/workflows/cindy-saves.yml']
@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gen: [6,7]
+        gen: [6]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,8 +35,8 @@ jobs:
           dotnet-version: '10.0.103'
       - uses: actions/download-artifact@v4
         with:
-          name: Cindy-V2-Gen${{ matrix.gen }}-four-collections
-          run-id: 46114586029
+          name: Cindy-V3-Gen${{ matrix.gen }}-incremental
+          run-id: 46115553631
           github-token: ${{ github.token }}
           path: baseline
       - name: Prepare collection-specific 6V policy
@@ -55,7 +55,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Cindy-V3-Gen${{ matrix.gen }}-incremental
+          name: Cindy-V4-Gen${{ matrix.gen }}-incremental
           path: output/
           if-no-files-found: warn
           retention-days: 14

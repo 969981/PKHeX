@@ -12,3 +12,25 @@ $p = "$plugin/PKHeX.Core.AutoMod/Enhancements/ModLogic.cs"
 $s = Get-Content $p -Raw
 $s = $s.Replace('var attack = profile.Nature is Nature.Timid or Nature.Quiet ? 0 : 31;', 'var attack = 31;').Replace('var speed = profile.Nature is Nature.Brave or Nature.Quiet ? 0 : 31;', 'var speed = 31;')
 Set-Content $p $s -Encoding utf8
+
+# Expose a targeted entry point that follows the full Living Dex trainer override path.
+$p = "$plugin/PKHeX.Core.AutoMod/Enhancements/ModLogic.cs"
+$s = Get-Content $p -Raw
+$anchor = '    public static bool GetRandomEncounter(this ITrainerInfo tr, ushort species, byte form, bool shiny, bool alpha, out PKM? pk)'
+if (-not $s.Contains($anchor)) { throw 'Pinned ModLogic API changed' }
+$helper = @'
+    public static bool GetCindyTargetEncounter(this ITrainerInfo tr, ushort species, byte form, bool shiny, out PKM? pk)
+    {
+        var cfg = new LivingDexConfig
+        {
+            IncludeForms = true, SetShiny = shiny, UseRecommendedBattleBuild = true,
+            UseRecommendedBattleNature = true, UseRecommendedBattleIVs = true,
+            UseRecommendedBattleEVs = true, UseRecommendedBattleMoves = true,
+        };
+        pk = AddPKM(tr, tr, species, form, cfg, null, trainerOverride: tr);
+        return pk is not null;
+    }
+
+'@
+$s = $s.Replace($anchor, $helper + $anchor)
+Set-Content $p $s -Encoding utf8

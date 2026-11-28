@@ -378,7 +378,7 @@ namespace PKHeX.Core.AutoMod
                         {
                             try
                             {
-                                if(!tr.GetRandomEncounter(target.Species,target.Form,shiny,false,true,out var source) || source==null)
+                                if(!tr.GetCindyTargetEncounter(target.Species,target.Form,shiny,out var source) || source==null)
                                 { audit.WriteLine($"{mode}\t{key}\tNO_ENCOUNTER\t{version}"); continue; }
                                 var pk=EntityConverter.ConvertToType(source,save.PKMType,out var conversion);
                                 if(pk==null || pk.Species!=target.Species || pk.Form!=target.Form || pk.IsShiny!=shiny ||
@@ -428,11 +428,28 @@ namespace PKHeX.Core.AutoMod
                             {
                                 var tr=Trainer(p,game,language);
                                 var pk=gift.ConvertToPKM(tr);
+                                // WC6 recipient-owned simulated Bank and egg templates do not apply recipient IDs in ConvertToPKM.
+                                // Only supply recipient identity when the source card does not set a fixed OT and allows a recipient ID.
+                                if(gift is WC6 wc && !wc.IsOriginalTrainerNameSet && (wc.IsEgg || (wc.CardID==0 && wc.OTGender==3)))
+                                {
+                                    pk.ID32=tr.ID32;
+                                    pk.OriginalTrainerName=CindyName(pk.Language);
+                                    if(pk.IsEgg && pk.EggMetDate==null) pk.EggMetDate=pk.MetDate;
+                                    pk.RefreshChecksum();
+                                }
                                 if(pk.GetType()!=save.PKMType || pk.Species!=gift.Species || pk.Form!=gift.Form){Count("TYPE_OR_FORM");continue;}
                                 var la=new LegalityAnalysis(pk);
                                 if(!la.Valid){Count("INVALID:"+la.Report().Replace('\r',' ').Replace('\n',' '));continue;}
                                 if(la.EncounterMatch is not MysteryGift matched || matched.CardID!=gift.CardID || matched.GetType()!=gift.GetType())
-                                {Count("MATCHED_OTHER:"+la.EncounterMatch.GetType().Name+":"+(la.EncounterMatch as MysteryGift)?.CardID);continue;}
+                                {
+                                    // Distinct distribution cards can be byte-equivalent in a received egg.
+                                    // Archive only if this precise source template also matches, and report ambiguity separately.
+                                    if(!gift.IsEgg || la.EncounterMatch is not MysteryGift ||
+                                       !gift.IsMatchExact(pk,new EvoCriteria {Species=pk.Species,Form=pk.Form,LevelMin=pk.MetLevel,LevelMax=100}) ||
+                                       gift.GetMatchRating(pk)!=EncounterMatchRating.Match)
+                                    {Count("MATCHED_OTHER:"+la.EncounterMatch.GetType().Name+":"+(la.EncounterMatch as MysteryGift)?.CardID);continue;}
+                                    Count("AMBIGUOUS_EQUIVALENT_EGG_CARD:"+((MysteryGift)la.EncounterMatch).CardID);
+                                }
                                 if(!NormalizeCindy(pk,p)){Count("IDENTITY");continue;}
                                 best=pk;break;
                             }
