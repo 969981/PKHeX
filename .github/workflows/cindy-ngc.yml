@@ -1,0 +1,64 @@
+name: Cindy NGC collection
+on:
+  push:
+    branches: [feat/cindy-ngc-dex]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ngc:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: 969981/PKHeX-Plugins_CHS
+          ref: e2cbf30d025419b384d6453aa294944553b34346
+          path: PKHeX-Plugins/PKHeX-Plugins_CHS
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.103'
+      - name: Prepare NGC generation
+        shell: pwsh
+        run: |
+          ./tools/CindyDex/prepare.ps1
+          Copy-Item tools/CindyDex/NgcDex.cs PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli/
+      - name: Publish local GCI importer and generator
+        shell: pwsh
+        run: |
+          dotnet publish PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release -r win-x64 --self-contained true -o ngc-tool 2>&1 | Tee-Object build-ngc.log
+          exit $LASTEXITCODE
+      - name: Generate NGC candidates
+        shell: pwsh
+        run: |
+          ./ngc-tool/CindyDex.Cli.exe ngc output 2>&1 | Tee-Object generate-ngc.log
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cindy-NGC-entities
+          path: output/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cindy-NGC-local-GCI-importer
+          path: ngc-tool/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cindy-NGC-logs
+          path: '*-ngc.log'
+          if-no-files-found: warn
+      - name: Check coverage
+        shell: python
+        run: |
+          import csv
+          with open('output/manifest.tsv',encoding='utf-8') as f: rows=list(csv.DictReader(f,delimiter='\t'))
+          for g in ['Colosseum','XD']:
+              for m in ['AllNonShiny','AllShiny']:
+                  r=[x for x in rows if x['Game']==g and x['Mode']==m]
+                  good=[x for x in r if x['Status'] in ['OK','NONSHINY_FALLBACK']]
+                  print(g,m,'species',len(set(x['Species'] for x in good)),'6V',sum(x['IVTotal']=='186' for x in good))
+          if any(x['Status'] not in ['OK','NONSHINY_FALLBACK'] for x in rows): raise SystemExit('Missing or incompatible candidates')
