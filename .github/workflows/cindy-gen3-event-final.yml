@@ -1,0 +1,43 @@
+name: Cindy Gen3 native event final recovery
+on:
+  push:
+    branches: [fix/cindy-gen3-event-final]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  event:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include: [{"species":251,"shiny":false},{"species":385,"shiny":false},{"species":385,"shiny":true}]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: 969981/PKHeX-Plugins_CHS
+          ref: e2cbf30d025419b384d6453aa294944553b34346
+          path: PKHeX-Plugins/PKHeX-Plugins_CHS
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.103'
+      - name: Prepare and build
+        shell: pwsh
+        run: |
+          ./tools/CindyDex/prepare.ps1
+          dotnet build PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release
+          exit $LASTEXITCODE
+      - name: Generate and validate fixed OT event
+        shell: pwsh
+        run: |
+          $dll = (Get-ChildItem 'PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli/bin/Release' -Recurse -Filter CindyDex.Cli.dll | Select-Object -First 1).FullName
+          dotnet $dll gen3-event-final ${{ matrix.species }} '${{ matrix.shiny }}' output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Get-ChildItem output -Recurse -Filter '*.pk3')) { throw 'No validated native event candidate' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cindy-Gen3-event-${{ matrix.species }}-${{ matrix.shiny }}
+          path: output/
