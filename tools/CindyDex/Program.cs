@@ -8,6 +8,10 @@ if (args.Length==4 && args[0]=="incremental" && int.TryParse(args[1],out int g))
     CindyDexExporter.RunIncremental(args[2],args[3],g);
     return 0;
 }
+if(args.Length==4 && args[0]=="gen3-event-final")
+{
+    CindyDexExporter.RunGen3EventFinal(ushort.Parse(args[1]),bool.Parse(args[2]),args[3]);return 0;
+}
 if(args.Length==7 && args[0]=="legacy-final-target")
 {
     CindyDexExporter.RunLegacyFinalTarget(int.Parse(args[1]),ushort.Parse(args[2]),byte.Parse(args[3]),bool.Parse(args[4]),Enum.Parse<GameVersion>(args[5]),args[6]);return 0;
