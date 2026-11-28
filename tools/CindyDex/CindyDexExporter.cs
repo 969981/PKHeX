@@ -311,6 +311,159 @@ namespace PKHeX.Core.AutoMod
             }
         }
 
+
+        // Reuse the actual V2 artifacts; never call the full Living Dex generator.
+        public static void RunIncremental(string baseline, string root, int generation)
+        {
+            var p=Profiles.Single(x=>x.Gen==generation);
+            if(generation is not (6 or 7)) throw new ArgumentException("Incremental baseline is Gen6 or Gen7 only.");
+            Directory.CreateDirectory(root);
+            using var scope=APILegality.EnterSettingsScope();
+            APILegality.UseTrainerData=false;
+            APILegality.GameVersionPriority=GameVersionPriorityType.PriorityOrder;
+            APILegality.MatchRequestedBuild=true;
+            APILegality.RequestedNatureMatchPolicy=RequestedNatureMatchPolicy.NativeOnly;
+            APILegality.ConstrainedIVStrategy=CorrelationConstrainedIVStrategy.PreferHighestLegalIVs;
+            Legalizer.EnableEasterEggs=false;
+            EncounterEvent.RefreshMGDB();
+            var lang=generation==7?LanguageID.ChineseS:LanguageID.Japanese;
+            var carrier=generation==7?GameVersion.US:GameVersion.OR;
+            var save=Trainer(p,carrier,lang);
+            using var log=new StreamWriter(Path.Combine(root,"manifest.tsv"),false,Encoding.UTF8);
+            using var audit=new StreamWriter(Path.Combine(root,"incremental-audit.tsv"),false,Encoding.UTF8);
+            log.WriteLine(File.ReadLines(Path.Combine(baseline,"manifest.tsv")).First());
+            audit.WriteLine("Mode\\tKey\\tStatus\\tDetail".Replace("\\t","\t"));
+            var baseRows=File.ReadLines(Path.Combine(baseline,"manifest.tsv")).Skip(1).Select(x=>x.Split('\t')).Where(x=>x.Length>=4).ToArray();
+            PKM Read(string path) => generation==6 ? new PK6(File.ReadAllBytes(path)) : new PK7(File.ReadAllBytes(path));
+            Dictionary<string,PKM> Load(string mode)
+            {
+                var dict=new Dictionary<string,PKM>();
+                var dir=Path.Combine(baseline,$"Gen{generation}",mode);
+                foreach(var file in Directory.GetFiles(dir,$"*.pk{generation}").OrderBy(x=>x))
+                {
+                    var pk=Read(file);
+                    var key=Path.GetFileNameWithoutExtension(file);
+                    if (!NormalizeCindy(pk,p) || !new LegalityAnalysis(pk).Valid)
+                    { audit.WriteLine($"{mode}\t{key}\tBASE_INVALID\t{pk.OriginalTrainerName}"); continue; }
+                    dict[key]=pk;
+                }
+                return dict;
+            }
+            var collections=new Dictionary<string,List<PKM>>();
+            var all=new Dictionary<string,Dictionary<string,PKM>>();
+            foreach(var mode in new[]{"AllNonShiny","AllShiny"})
+            {
+                var shiny=mode=="AllShiny";
+                var current=Load(mode);
+                var targets=new List<(ushort Species,byte Form)>();
+                if(generation==7) for(byte form=0;form<28;form++) targets.Add((201,form));
+                targets.Add((711,3));
+                foreach(var target in targets)
+                {
+                    string key=$"{target.Species:D4}-{target.Form:D2}";
+                    if(current.ContainsKey(key)) continue;
+                    PKM? best=null;
+                    // Unown originates before Gen7. Generate with the final raw ID32
+                    // in a Japanese source game, then use official Core conversion.
+                    var sources=target.Species==201
+                        ? new[]{GameVersion.HG,GameVersion.SS,GameVersion.D,GameVersion.Pt,GameVersion.OR,GameVersion.AS}
+                        : new[]{GameVersion.X,GameVersion.Y,GameVersion.OR,GameVersion.AS};
+                    foreach(var version in sources)
+                    {
+                        var tr=BlankSaveFile.Get(version,"Ｃｉｎｄｙ",LanguageID.Japanese);
+                        tr.ID32=save.ID32; tr.Gender=save.Gender;
+                        APILegality.PriorityOrder=[version];
+                        RecentTrainerCache.SetRecentTrainer(tr);
+                        for(int attempt=0;attempt<3;attempt++)
+                        {
+                            try
+                            {
+                                if(!tr.GetRandomEncounter(target.Species,target.Form,shiny,false,true,out var source) || source==null)
+                                { audit.WriteLine($"{mode}\t{key}\tNO_ENCOUNTER\t{version}"); continue; }
+                                var pk=EntityConverter.ConvertToType(source,save.PKMType,out var conversion);
+                                if(pk==null || pk.Species!=target.Species || pk.Form!=target.Form || pk.IsShiny!=shiny ||
+                                   !NormalizeCindy(pk,p) || !Identity(pk,p) || !new LegalityAnalysis(pk).Valid)
+                                { audit.WriteLine($"{mode}\t{key}\tREJECTED\t{version} {conversion} OT={pk?.OriginalTrainerName} ID={pk?.ID32} Lang={pk?.Language}"); continue; }
+                                if(best==null || Quality(pk)>Quality(best)) best=pk;
+                                if(IVTotal(best)==186 && Preferred(best)) break;
+                            }
+                            catch(Exception ex){audit.WriteLine($"{mode}\t{key}\tATTEMPT_ERROR\t{version} {ex.GetType().Name}");}
+                        }
+                        if(best!=null && IVTotal(best)==186 && Preferred(best)) break;
+                    }
+                    if(best!=null){current[key]=best;audit.WriteLine($"{mode}\t{key}\tREPAIRED\t{best.Version} IV={IVTotal(best)}");}
+                    else log.WriteLine($"{generation}\t{mode}\t{key}\tMISSING:TARGETED_FORM");
+                    audit.Flush();
+                }
+                all[mode]=current;
+                foreach(var (key,pk) in current.OrderBy(x=>x.Key))
+                    Write(log,root,generation,mode,key,pk,pk.IsShiny!=shiny?(shiny?"NONSHINY_FALLBACK":"SHINY_FALLBACK"):Identity(pk,p)?"OK":"EVENT_OT_EXCEPTION");
+                collections[mode]=current.OrderBy(x=>x.Key).Select(x=>x.Value).ToList();
+            }
+
+            // Reattempt only the exact missing event indices from the V2 manifest.
+            var events=Load("Events");
+            var gifts=EncounterEvent.GetAllEvents().Where(x=>x.Generation==generation && x.Context==save.Context && x.Species>0 && x.Species<=p.Max).ToArray();
+            var languages=generation==7
+                ? new[]{LanguageID.ChineseS,LanguageID.Japanese,LanguageID.English,LanguageID.French,LanguageID.Italian,LanguageID.German,LanguageID.Spanish,LanguageID.Korean,LanguageID.ChineseT}
+                : new[]{LanguageID.Japanese,LanguageID.English,LanguageID.French,LanguageID.Italian,LanguageID.German,LanguageID.Spanish,LanguageID.Korean};
+            foreach(var row in baseRows.Where(x=>x[1]=="Events" && x[3].StartsWith("MISSING:")))
+            {
+                string key=row[2];
+                if(events.ContainsKey(key)) continue;
+                int index=int.Parse(key.Split('-')[0])-1;
+                if(index<0 || index>=gifts.Length){log.WriteLine($"{generation}\tEvents\t{key}\tMISSING:INDEX");continue;}
+                var gift=gifts[index];
+                if(key!=$"{index+1:D5}-card{gift.CardID:D5}-species{gift.Species:D4}") throw new InvalidOperationException("Event database changed: "+key);
+                PKM? best=null;
+                var reasons=new Dictionary<string,int>();
+                void Count(string reason)=>reasons[reason]=reasons.GetValueOrDefault(reason)+1;
+                foreach(var language in languages)
+                {
+                    foreach(var game in p.Games)
+                    {
+                        for(int attempt=0;attempt<3;attempt++)
+                        {
+                            try
+                            {
+                                var tr=Trainer(p,game,language);
+                                var pk=gift.ConvertToPKM(tr);
+                                if(pk.GetType()!=save.PKMType || pk.Species!=gift.Species || pk.Form!=gift.Form){Count("TYPE_OR_FORM");continue;}
+                                var la=new LegalityAnalysis(pk);
+                                if(!la.Valid){Count("INVALID:"+la.Report().Replace('\r',' ').Replace('\n',' '));continue;}
+                                if(la.EncounterMatch is not MysteryGift matched || matched.CardID!=gift.CardID || matched.GetType()!=gift.GetType())
+                                {Count("MATCHED_OTHER:"+la.EncounterMatch.GetType().Name+":"+(la.EncounterMatch as MysteryGift)?.CardID);continue;}
+                                if(!NormalizeCindy(pk,p)){Count("IDENTITY");continue;}
+                                best=pk;break;
+                            }
+                            catch(Exception ex){Count(ex.GetType().Name);}
+                        }
+                        if(best!=null)break;
+                    }
+                    if(best!=null)break;
+                }
+                if(best!=null)events[key]=best;
+                else log.WriteLine($"{generation}\tEvents\t{key}\tMISSING:EVENT_RETRY");
+                audit.WriteLine($"Events\t{key}\t{(best==null?"UNRESOLVED":"REPAIRED")}\t{gift.GetType().Name} Egg={gift.IsEgg} Title={gift.CardTitle.Replace('\t',' ')} "+JsonSerializer.Serialize(reasons));
+                audit.Flush();
+            }
+            foreach(var (key,pk) in events.OrderBy(x=>x.Key))
+                Write(log,root,generation,"Events",key,pk,pk.IsShiny?"EVENT_SHINY":"EVENT_NONSHINY");
+            collections["Events"]=events.OrderBy(x=>x.Key).Select(x=>x.Value).Where(x=>!x.IsEgg).ToList();
+            // Rebuild derived HOME collections from retained and repaired entries only.
+            collections["HOME-NonShiny"]=HomeCollection(p,root,"HOME-NonShiny",collections["AllNonShiny"],log);
+            collections["HOME-Shiny"]=HomeCollection(p,root,"HOME-Shiny",collections["AllShiny"],log);
+            var mixed=Load("Mixed");
+            foreach(var (key,pk) in all["AllNonShiny"])
+                if(!mixed.ContainsKey(key)) mixed[key]=all["AllShiny"].GetValueOrDefault(key,pk);
+            foreach(var (key,pk) in mixed.OrderBy(x=>x.Key)) Write(log,root,generation,"Mixed",key,pk,"MIXED");
+            foreach(var (mode,entries) in collections)
+            {
+                ExportSaveCopies(root,Trainer(p,p.Games[0],lang),mode,entries,log);
+                ExportSaveCopies(root,save,mode,entries,log);
+            }
+        }
+
         public static void Run(string root, int? generation = null, SaveFile? originalSave = null)
         {
             if (originalSave != null && originalSave.Generation != generation)

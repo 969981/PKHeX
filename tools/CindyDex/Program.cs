@@ -3,6 +3,11 @@ using System.IO;
 using PKHeX.Core;
 using PKHeX.Core.AutoMod;
 
+if (args.Length==4 && args[0]=="incremental" && int.TryParse(args[1],out int g))
+{
+    CindyDexExporter.RunIncremental(args[2],args[3],g);
+    return 0;
+}
 if ((args.Length != 2 && args.Length != 3) || !int.TryParse(args[0], out var generation) || generation < 3 || generation > 7)
 {
     Console.Error.WriteLine("Usage: CindyDex.Cli <generation 3-7> <new output directory> [original save path]");

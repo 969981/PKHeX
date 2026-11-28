@@ -1,13 +1,14 @@
-name: Cindy Gen3-7 V2 HOME collections
+name: Cindy Gen6-7 targeted V3 repair
 on:
   push:
-    branches: [feat/cindy-home-collections]
+    branches: [fix/cindy-v2-incremental]
   pull_request:
     branches: [master]
     paths: ['tools/CindyDex/**', '.github/workflows/cindy-saves.yml']
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: cindy-saves-${{ github.ref }}
   cancel-in-progress: true
@@ -18,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gen: [3,4,5,6,7]
+        gen: [6,7]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +33,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.103'
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cindy-V2-Gen${{ matrix.gen }}-four-collections
+          run-id: 46114586029
+          github-token: ${{ github.token }}
+          path: baseline
       - name: Prepare collection-specific 6V policy
         shell: pwsh
         run: ./tools/CindyDex/prepare.ps1
@@ -43,12 +50,12 @@ jobs:
       - name: Generate PKM and save candidates
         shell: pwsh
         run: |
-          dotnet run --no-build --project PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release -- ${{ matrix.gen }} output 2>&1 | Tee-Object -FilePath generate.log
+          dotnet run --no-build --project PKHeX-Plugins/PKHeX-Plugins_CHS/CindyDex.Cli -c Release -- incremental ${{ matrix.gen }} baseline output 2>&1 | Tee-Object -FilePath generate.log
           exit $LASTEXITCODE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Cindy-V2-Gen${{ matrix.gen }}-four-collections
+          name: Cindy-V3-Gen${{ matrix.gen }}-incremental
           path: output/
           if-no-files-found: warn
           retention-days: 14
@@ -71,12 +78,16 @@ jobs:
           for mode in ['AllNonShiny','AllShiny','HOME-NonShiny','HOME-Shiny']:
               data=[r for r in rows if r['Mode']==mode and r.get('OT')]
               missing=sorted(set(range(1,maximum+1))-{int(r['Key'].split('-')[0]) for r in data})
-              print(mode,'entries',len(data),'missing',missing,'6V',sum(r['IVTotal']=='186' for r in data),'preferred nature',sum(r['PreferredNature']=='True' for r in data),'exceptions',sum(r['Status']!='OK' for r in data))
+              print(mode,'entries',len(data),'missing',missing,'6V',sum(r['IVTotal']=='186' for r in data),'preferred nature',sum(r['PreferredNature']=='True' for r in data),'exceptions',sum(r['Status'] not in ('OK','HOME_STATIC_OK') for r in data))
               for r in data:
                   if r['OT'].replace('Ｃｉｎｄｙ','Cindy') == 'Cindy':
                       expected='Ｃｉｎｄｙ' if r['Language'] in ('1','9','10') else 'Cindy'
                       if r['OT']!=expected: errors.append(('OT_WIDTH',r['Key'],r['OT']))
                   if mode.startswith('HOME-') and r['HeldItem']!='0': errors.append(('ITEM',r['Key']))
+              if mode in ('AllNonShiny','AllShiny'):
+                  keys={r['Key'] for r in data}
+                  required={'0711-03'} | ({f'0201-{i:02d}' for i in range(28)} if ${{ matrix.gen }}==7 else set())
+                  if required-keys: errors.append(('missing_forms',sorted(required-keys)))
               if missing or not any(r['Mode']=='Save-'+mode and r['Status'].startswith('SAVE_VERIFIED:') for r in rows): errors.append(mode)
           print('unresolved',len(errors))
           if errors: raise SystemExit('Incomplete candidate: see manifest; not a final verified collection')
