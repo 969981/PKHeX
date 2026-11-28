@@ -44,9 +44,9 @@ internal static class NgcDex
     {
         Directory.CreateDirectory(root);
         EncounterEvent.RefreshMGDB();
-        var trainer = BlankSaveFile.Get(GameVersion.E, OT, LanguageID.Japanese);
-        trainer.TID16 = Tid; trainer.SID16 = Sid; trainer.Gender = 0;
-        RecentTrainerCache.SetRecentTrainer(trainer);
+        var trainer = new SimpleTrainerInfo(GameVersion.CXD) { OT=OT,TID16=Tid,SID16=Sid,Gender=0,Language=(int)LanguageID.Japanese,Generation=3,Context=EntityContext.Gen3 };
+        using var audit = new StreamWriter(Path.Combine(root,"candidate-audit.tsv")); audit.AutoFlush=true;
+        audit.WriteLine("Game\tSpecies\tForm\tGender\tShiny\tAttempt\tReason\tTID\tSID\tOT\tVersion\tMatchedEncounter\tLegality");
         using var log = new StreamWriter(Path.Combine(root,"manifest.tsv"));
         log.AutoFlush=true;
         log.WriteLine("Game\tMode\tSpecies\tForm\tGender\tStatus\tOrigin\tOT\tTID\tSID\tShiny\tIVTotal\tNature\tEncounter");
@@ -66,24 +66,38 @@ internal static class NgcDex
                     PKM? best=null, fixedBest=null;
                     string bestEncounter="", fixedEncounter="";
                     bool eligible=false;
-                    foreach(var enc in group.GroupBy(e=>e.GetType().Name+":"+e.LongName).Select(g=>g.First()))
+                    foreach(var enc in group)
                     {
                         if(shiny && enc.Shiny==Shiny.Never) continue;
                         if(enc is IFixedGender fg && fg.IsFixedGender && fg.Gender!=gender) continue;
                         eligible=true;
-                        var blank=trainer.BlankPKM;blank.Species=enc.Species;blank.Form=enc.Form;
+                        var blank=new PK3 {Species=enc.Species,Form=enc.Form};
                         var nature=CindyDexExporter.GetNgcRecommendedNature(blank);
                         var basic=EncounterCriteria.Unrestricted with {Gender=(Gender)gender,Shiny=shiny?Shiny.Always:Shiny.Never};
                         var perfect=basic with {Nature=nature,IV_HP=31,IV_ATK=31,IV_DEF=31,IV_SPA=31,IV_SPD=31,IV_SPE=31};
-                        for(int attempt=0;attempt<5;attempt++)
+                        for(int attempt=0;attempt<8;attempt++)
                         {
                             try
                             {
                                 var criteria=attempt==0?perfect:attempt==1?basic with {Nature=nature}:basic;
                                 var pk=enc.ConvertToPKM(trainer,criteria);
-                                if(pk.Species!=enc.Species || pk.Form!=enc.Form || pk.Gender!=gender || pk.IsShiny!=shiny) continue;
+                                // Encounter constructors can leave the GameCube region uninitialized.
+                                // Preserve generated identity, PID/IV and encounter provenance; only encode region and strings.
+                                var name=pk.OriginalTrainerName;
+                                var nick=pk.Nickname;
+                                if(pk is IGCRegion gc)
+                                {
+                                    var region=pk.Language==(int)LanguageID.Japanese?GCRegion.NTSC_J:GCRegion.NTSC_U;
+                                    gc.CurrentRegion=gc.OriginalRegion=region;
+                                    pk.OriginalTrainerTrash.Clear();pk.NicknameTrash.Clear();
+                                    pk.OriginalTrainerName=enc is EncounterGift3Colo or EncounterTrade3XD?name:EncounterUtil.GetTrainerName(trainer,pk.Language);
+                                    pk.Nickname=nick;
+                                }
                                 pk.RefreshChecksum();
-                                if(!Native(pk,game)) continue;
+                                var la=new LegalityAnalysis(pk);
+                                var reason=pk.Species!=enc.Species || pk.Form!=enc.Form?"SPECIES_FORM":pk.Gender!=gender?"GENDER":pk.IsShiny!=shiny?"SHINY":!la.Valid?"LEGALITY":!Native(pk,game)?"ORIGIN":!Identity(pk)?"IDENTITY":"OK";
+                                audit.WriteLine($"{game}\t{enc.Species}\t{enc.Form}\t{gender}\t{shiny}\t{attempt}\t{reason}\t{pk.TID16}\t{pk.SID16}\t{pk.OriginalTrainerName}\t{pk.Version}\t{la.EncounterOriginal.GetType().Name}\t{(la.Valid?"Valid":la.Report().Replace("\r"," ").Replace("\n"," ").Replace("\t"," "))}");
+                                if(reason is not ("OK" or "IDENTITY"))continue;
                                 int Score(PKM p)=>(p.Nature==nature?1000:0)+IVTotal(p);
                                 if(Identity(pk))
                                 {
